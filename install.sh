@@ -10,7 +10,7 @@ DESK_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 command -v python3 >/dev/null || { echo "python3 non trovato"; exit 1; }
 
 mkdir -p "$APP_DIR" "$BIN_DIR" "$DESK_DIR"
-cp "$SRC/ollama_gui.py" "$SRC/requirements.txt" "$APP_DIR/"
+install -m 644 "$SRC/ollama_gui.py" "$SRC/requirements.txt" "$APP_DIR/"
 
 echo "→ Creo l'ambiente virtuale e installo le dipendenze…"
 python3 -m venv "$APP_DIR/venv"
