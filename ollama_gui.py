@@ -5,8 +5,8 @@ Ollama GUI per Linux
 Interfaccia desktop (Qt / PySide6) per Ollama, con le stesse funzioni
 dell'app ufficiale per Windows:
 
-  * chat in streaming con rendering Markdown e blocchi di codice
-  * cronologia delle conversazioni (ricerca, rinomina, elimina, esporta)
+  * chat in streaming con rendering Markdown e blocchi di codice copiabili
+  * cronologia delle conversazioni raggruppata per data (ricerca, rinomina, elimina, esporta)
   * scelta del modello, download (pull) con barra di avanzamento, eliminazione
   * allegati: immagini (modelli con visione), file di testo/codice, PDF
     - trascinando i file nella finestra, con il pulsante o incollando un'immagine
@@ -15,6 +15,8 @@ dell'app ufficiale per Windows:
     keep_alive, icona nella barra di sistema
   * rigenera risposta, ferma generazione, copia risposta, statistiche token/s
   * avvio del server Ollama se non e' in esecuzione
+
+L'aspetto segue i colori del tema di sistema (chiaro/scuro e colore d'accento di KDE).
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ import base64
 import hashlib
 import html
 import json
+import math
 import os
 import re
 import shutil
@@ -34,21 +37,41 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import (
+    QBuffer,
+    QByteArray,
+    QEvent,
+    QIODevice,
+    QObject,
+    QPointF,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import (
     QAction,
     QColor,
+    QDesktopServices,
     QFont,
+    QFontMetrics,
     QGuiApplication,
     QIcon,
     QImage,
     QKeySequence,
     QPainter,
+    QPainterPath,
+    QPen,
     QPixmap,
     QShortcut,
     QTextDocument,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -57,6 +80,8 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -70,16 +95,21 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
     QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
     QTextBrowser,
+    QToolButton,
     QVBoxLayout,
     QWidget,
-    QAbstractItemView,
 )
 
 try:  # rendering Markdown piu' fedele; se manca si usa quello di Qt
@@ -97,9 +127,9 @@ CHATS_DIR = DATA_DIR / "chats"
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 MAX_TEXT_CHARS = 400_000
 MAX_IMAGE_SIDE = 2048
+COLUMN_WIDTH = 820  # larghezza massima della colonna dei messaggi
 
 THINK_RE = re.compile(r"<think>(.*?)(?:</think>|$)", re.S)
-
 
 # --------------------------------------------------------------------------- utilita'
 def normalize_host(h: str) -> str:
@@ -191,6 +221,7 @@ class Settings(dict):
         "think_mode": 0,  # 0 auto, 1 attivo, 2 disattivo
         "geometry": "",
         "splitter": [260, 900],
+        "sidebar": True,
     }
 
     def __init__(self):
@@ -283,7 +314,7 @@ class Ollama:
 def friendly_error(e: Exception | str) -> str:
     s = str(e)
     if "Connection refused" in s or "Max retries" in s or "ConnectionError" in s or "Failed to establish" in s:
-        return "Impossibile contattare Ollama. Il server e' in esecuzione? (menu Server → Avvia Ollama)"
+        return "Impossibile contattare Ollama. Il server e' in esecuzione? (pulsante «Avvia» in basso a sinistra)"
     return s
 
 
@@ -464,28 +495,245 @@ class PullWorker(QThread):
         self.done.emit()
 
 
+
+# --------------------------------------------------------------------------- tema
+def _mix(a: QColor, b: QColor, t: float) -> str:
+    """Colore intermedio tra a e b (t=0 → a, t=1 → b)."""
+    return QColor(
+        round(a.red() + (b.red() - a.red()) * t),
+        round(a.green() + (b.green() - a.green()) * t),
+        round(a.blue() + (b.blue() - a.blue()) * t),
+    ).name()
+
+
+def theme_colors() -> dict:
+    """Palette dell'interfaccia derivata dal tema di sistema (chiaro/scuro e colore d'accento)."""
+    pal = QApplication.palette()
+    win, base = pal.window().color(), pal.base().color()
+    text, acc = pal.windowText().color(), pal.highlight().color()
+    dark = win.lightness() < 128
+    white = QColor("white")
+    err = QColor("#f87171" if dark else "#dc2626")
+    return dict(
+        dark=dark,
+        bg=base.name(),
+        side=win.name(),
+        text=text.name(),
+        muted=_mix(text, base, 0.45),
+        border=_mix(base, text, 0.16 if dark else 0.13),
+        hover=_mix(base, text, 0.08 if dark else 0.06),
+        surface=_mix(base, text, 0.06 if dark else 0.025),
+        side_hover=_mix(win, text, 0.07),
+        side_sel=_mix(win, acc, 0.28 if dark else 0.16),
+        accent=acc.name(),
+        accent_hover=(acc.lighter(115) if dark else acc.darker(110)).name(),
+        accent_fg=pal.highlightedText().color().name(),
+        bubble=_mix(base, acc, 0.24 if dark else 0.12),
+        think=_mix(base, text, 0.05 if dark else 0.03),
+        codebg=_mix(base, text, 0.08 if dark else 0.045),
+        codefg=text.name(),
+        link=_mix(acc, white, 0.3) if dark else acc.name(),
+        err=err.name(),
+        errbg=_mix(base, err, 0.12),
+    )
+
+
+def build_qss(c: dict) -> str:
+    # le regole sono limitate (tramite objectName) ai widget della finestra principale:
+    # le finestre di dialogo mantengono l'aspetto nativo del desktop
+    scrollbars = "".join(
+        f"""
+{s} QScrollBar:vertical {{ background:transparent; width:10px; margin:0; }}
+{s} QScrollBar::handle:vertical {{ background:{c['border']}; border-radius:4px; min-height:32px; margin:2px; }}
+{s} QScrollBar::handle:vertical:hover {{ background:{c['muted']}; }}
+{s} QScrollBar::add-line:vertical, {s} QScrollBar::sub-line:vertical {{ height:0; }}
+{s} QScrollBar::add-page:vertical, {s} QScrollBar::sub-page:vertical {{ background:none; }}"""
+        for s in ("#chatScroll", "#chatList", "#input")
+    )
+    return f"""
+#main, #header, #composerArea, #hero, #chatCanvas {{ background:{c['bg']}; }}
+#chatScroll {{ background:{c['bg']}; border:none; }}
+#sidebar {{ background:{c['side']}; }}
+QSplitter::handle {{ background:{c['border']}; }}
+QLabel#brand {{ font-size:15px; font-weight:700; color:{c['text']}; }}
+QPushButton#newChat {{
+    background:{c['accent']}; color:{c['accent_fg']}; border:none; border-radius:10px;
+    padding:9px 12px; font-weight:600; text-align:left;
+}}
+QPushButton#newChat:hover {{ background:{c['accent_hover']}; }}
+QLineEdit#search {{
+    background:{c['bg']}; color:{c['text']}; border:1px solid {c['border']};
+    border-radius:10px; padding:6px 10px;
+}}
+QLineEdit#search:focus {{ border-color:{c['accent']}; }}
+QListWidget#chatList {{ background:transparent; border:none; outline:0; }}
+QPushButton#sideBtn {{
+    background:transparent; color:{c['text']}; border:none; border-radius:8px;
+    padding:7px 8px; text-align:left;
+}}
+QPushButton#sideBtn:hover {{ background:{c['side_hover']}; }}
+QLabel#conn {{ color:{c['muted']}; }}
+QPushButton#startBtn {{
+    background:transparent; color:{c['accent']}; border:1px solid {c['accent']};
+    border-radius:8px; padding:3px 10px;
+}}
+QPushButton#startBtn:hover {{ background:{c['side_sel']}; }}
+QToolButton#pill {{
+    background:transparent; color:{c['text']}; border:none; border-radius:10px;
+    padding:6px 10px; font-weight:600;
+}}
+QToolButton#pill:hover, QToolButton#pill:pressed {{ background:{c['hover']}; }}
+QToolButton#pill:disabled {{ color:{c['muted']}; }}
+QToolButton#pill::menu-indicator, QToolButton#iconBtn::menu-indicator {{ image:none; width:0; }}
+QToolButton#iconBtn {{ background:transparent; color:{c['text']}; border:none; border-radius:8px; padding:6px; }}
+QToolButton#iconBtn:hover {{ background:{c['hover']}; }}
+QTextBrowser#rich {{
+    background:transparent; color:{c['text']}; border:none;
+    selection-background-color:{c['accent']}; selection-color:{c['accent_fg']};
+}}
+QFrame#userBubble {{ background:{c['bubble']}; border-radius:18px; }}
+QLabel#files {{ color:{c['muted']}; }}
+QLabel#modelTag {{ color:{c['text']}; font-weight:600; }}
+QToolButton#thinkToggle {{
+    background:transparent; color:{c['muted']}; border:none; border-radius:8px; padding:3px 6px;
+}}
+QToolButton#thinkToggle:hover {{ background:{c['hover']}; color:{c['text']}; }}
+QFrame#thinkBox {{ background:{c['think']}; border:1px solid {c['border']}; border-radius:12px; }}
+QToolButton#msgBtn {{
+    background:transparent; color:{c['muted']}; border:none; border-radius:7px; padding:4px 7px;
+}}
+QToolButton#msgBtn:hover {{ background:{c['hover']}; color:{c['text']}; }}
+QLabel#stats {{ color:{c['muted']}; }}
+QFrame#errorBox {{ background:{c['errbg']}; border:1px solid {c['err']}; border-radius:12px; }}
+QLabel#errorText {{ color:{c['err']}; }}
+QPushButton#retry {{
+    background:transparent; color:{c['err']}; border:1px solid {c['err']}; border-radius:8px; padding:4px 12px;
+}}
+QFrame#composer {{ background:{c['surface']}; border:1px solid {c['border']}; border-radius:22px; }}
+QFrame#composer[active="true"] {{ border:1px solid {c['accent']}; }}
+QPlainTextEdit#input {{
+    background:transparent; color:{c['text']}; border:none;
+    selection-background-color:{c['accent']}; selection-color:{c['accent_fg']};
+}}
+QToolButton#send {{ background:{c['accent']}; border:none; border-radius:17px; }}
+QToolButton#send:hover {{ background:{c['accent_hover']}; }}
+QToolButton#send:disabled {{ background:{c['border']}; }}
+QPushButton#chip {{
+    background:{c['bg']}; color:{c['text']}; border:1px solid {c['border']};
+    border-radius:12px; padding:4px 10px;
+}}
+QPushButton#chip:hover {{ border-color:{c['err']}; }}
+QLabel#hint {{ color:{c['muted']}; }}
+QLabel#heroTitle {{ font-size:26px; font-weight:700; color:{c['text']}; }}
+QLabel#heroSub {{ color:{c['muted']}; }}
+QPushButton#suggestion {{
+    background:{c['bg']}; color:{c['text']}; border:1px solid {c['border']};
+    border-radius:14px; padding:12px 14px; text-align:left;
+}}
+QPushButton#suggestion:hover {{ background:{c['hover']}; border-color:{c['muted']}; }}
+{scrollbars}
+"""
+
+
+def doc_css(c: dict) -> str:
+    """Foglio di stile dei documenti rich text (messaggi)."""
+    return (
+        "p, li { line-height:140%; }"
+        f"pre {{ font-family:monospace; color:{c['codefg']}; margin:0; }}"
+        f"code {{ font-family:monospace; background-color:{c['codebg']}; }}"
+        f"a {{ color:{c['link']}; text-decoration:none; }}"
+        f"th {{ background-color:{c['codebg']}; }}"
+        f"blockquote {{ color:{c['muted']}; }}"
+    )
+
+
+def theme_icon(*names: str) -> QIcon:
+    for n in names:
+        if QIcon.hasThemeIcon(n):
+            return QIcon.fromTheme(n)
+    return QIcon()
+
+
+def glyph_icon(kind: str, color: str, size: int = 64) -> QIcon:
+    """Icone disegnate a mano per il pulsante di invio (indipendenti dal tema)."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    s = float(size)
+    if kind == "send":
+        p.setPen(QPen(QColor(color), s * 0.1, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        top = QPointF(s / 2, s * 0.24)
+        p.drawLine(QPointF(s / 2, s * 0.78), top)
+        p.drawLine(QPointF(s * 0.27, s * 0.47), top)
+        p.drawLine(QPointF(s * 0.73, s * 0.47), top)
+    else:  # stop
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(color))
+        p.drawRoundedRect(QRectF(s * 0.3, s * 0.3, s * 0.4, s * 0.4), s * 0.07, s * 0.07)
+    p.end()
+    return QIcon(pm)
+
+
+def rounded_pixmap(img: QImage, max_side: int, radius: float, dpr: float = 1.0) -> QPixmap:
+    side = int(max_side * dpr)
+    if max(img.width(), img.height()) > side:
+        img = img.scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    pm = QPixmap(img.size())
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(pm.rect()), radius * dpr, radius * dpr)
+    p.setClipPath(path)
+    p.drawImage(0, 0, img)
+    p.end()
+    pm.setDevicePixelRatio(dpr)
+    return pm
+
+
+def scaled_font(f: QFont, k: float) -> QFont:
+    f = QFont(f)
+    if f.pointSizeF() > 0:
+        f.setPointSizeF(f.pointSizeF() * k)
+    else:
+        f.setPixelSize(max(8, round(f.pixelSize() * k)))
+    return f
+
+
 # --------------------------------------------------------------------------- widget
 class InputEdit(QPlainTextEdit):
     submit = Signal()
     image_pasted = Signal(QImage)
     files_pasted = Signal(list)
+    focus_changed = Signal(bool)
 
     def __init__(self):
         super().__init__()
+        self.setObjectName("input")
         self.setAcceptDrops(False)
-        self.setPlaceholderText("Scrivi un messaggio…  (Invio per inviare, Maiusc+Invio per andare a capo)")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setPlaceholderText("Scrivi un messaggio…")
         self.document().contentsChanged.connect(self._fit)
         self._fit()
 
     def _fit(self):
-        h = int(self.document().size().height()) + 14
-        self.setFixedHeight(max(46, min(h, 170)))
+        h = int(self.document().size().height() * self.fontMetrics().lineSpacing()) + 12
+        self.setFixedHeight(max(34, min(h, 220)))
 
     def keyPressEvent(self, e):
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (e.modifiers() & Qt.KeyboardModifier.ShiftModifier):
             self.submit.emit()
             return
         super().keyPressEvent(e)
+
+    def focusInEvent(self, e):
+        super().focusInEvent(e)
+        self.focus_changed.emit(True)
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        self.focus_changed.emit(False)
 
     def insertFromMimeData(self, src):
         if src.hasImage():
@@ -501,6 +749,332 @@ class InputEdit(QPlainTextEdit):
         super().insertFromMimeData(src)
 
 
+class MenuPicker(QToolButton):
+    """Pulsante "a pillola" con menu di scelta; espone un'API simile a QComboBox."""
+
+    currentTextChanged = Signal(str)
+    currentIndexChanged = Signal(int)
+
+    def __init__(self, fmt=None, extra=None):
+        super().__init__()
+        self.setObjectName("pill")
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMenu(QMenu(self))
+        self._fmt = fmt or (lambda t: t)
+        self._extra = extra or []  # [(etichetta, callback)] in fondo al menu
+        self._items: list[str] = []
+        self._index = -1
+        self._sync()
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def findText(self, t: str) -> int:
+        return self._items.index(t) if t in self._items else -1
+
+    def currentText(self) -> str:
+        return self._items[self._index] if 0 <= self._index < len(self._items) else ""
+
+    def currentIndex(self) -> int:
+        return self._index
+
+    def clear(self):
+        self._items = []
+        self._set(-1)
+
+    def addItems(self, items):
+        self._items += list(items)
+        if self._index < 0 and self._items:
+            self._set(0)
+        else:
+            self._sync()
+
+    def setCurrentText(self, t: str):
+        i = self.findText(t)
+        if i >= 0:
+            self._set(i)
+
+    def setCurrentIndex(self, i: int):
+        if 0 <= i < len(self._items):
+            self._set(i)
+
+    def _set(self, i: int):
+        changed = i != self._index
+        self._index = i
+        self._sync()
+        if changed:
+            self.currentIndexChanged.emit(i)
+            self.currentTextChanged.emit(self.currentText())
+
+    def _sync(self):
+        self.setText(f"{self._fmt(self.currentText())}  ▾")
+        m = self.menu()
+        m.clear()
+        for i, t in enumerate(self._items):
+            a = m.addAction(t)
+            a.setCheckable(True)
+            a.setChecked(i == self._index)
+            a.triggered.connect(lambda _=False, i=i: self._set(i))
+        if self._extra:
+            if self._items:
+                m.addSeparator()
+            for label, cb in self._extra:
+                m.addAction(label, cb)
+
+
+ROLE_ID = Qt.ItemDataRole.UserRole
+ROLE_SUB = Qt.ItemDataRole.UserRole + 1
+ROLE_HEADER = Qt.ItemDataRole.UserRole + 2
+
+
+class ChatItemDelegate(QStyledItemDelegate):
+    """Voci della cronologia su due righe (titolo + modello/ora) e intestazioni dei gruppi."""
+
+    def __init__(self, win: "MainWindow"):
+        super().__init__(win)
+        self.win = win
+
+    def sizeHint(self, opt, idx):
+        h = opt.fontMetrics.height()
+        return QSize(10, h + 18 if idx.data(ROLE_HEADER) else h * 2 + 18)
+
+    def paint(self, p, opt, idx):
+        c = self.win.c
+        r = opt.rect
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if idx.data(ROLE_HEADER):
+            f = scaled_font(opt.font, 0.85)
+            f.setWeight(QFont.Weight.DemiBold)
+            p.setFont(f)
+            p.setPen(QColor(c["muted"]))
+            p.drawText(r.adjusted(10, 0, -8, -4), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, idx.data())
+            p.restore()
+            return
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        if selected or opt.state & QStyle.StateFlag.State_MouseOver:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(c["side_sel"] if selected else c["side_hover"]))
+            p.drawRoundedRect(QRectF(r).adjusted(1, 1, -1, -1), 9, 9)
+        tr = r.adjusted(11, 8, -10, -8)
+        f = QFont(opt.font)
+        if selected:
+            f.setWeight(QFont.Weight.DemiBold)
+        fm = QFontMetrics(f)
+        p.setFont(f)
+        p.setPen(QColor(c["text"]))
+        p.drawText(QRect(tr.left(), tr.top(), tr.width(), fm.height()), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   fm.elidedText(idx.data() or "", Qt.TextElideMode.ElideRight, tr.width()))
+        f2 = scaled_font(opt.font, 0.85)
+        fm2 = QFontMetrics(f2)
+        p.setFont(f2)
+        p.setPen(QColor(c["muted"]))
+        p.drawText(QRect(tr.left(), tr.bottom() - fm2.height() + 1, tr.width(), fm2.height()),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   fm2.elidedText(idx.data(ROLE_SUB) or "", Qt.TextElideMode.ElideRight, tr.width()))
+        p.restore()
+
+
+class RichView(QTextBrowser):
+    """Testo rich text che si adatta in altezza al contenuto (lo scorrimento e' della lista messaggi)."""
+
+    def __init__(self, win: "MainWindow"):
+        super().__init__()
+        self.setObjectName("rich")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setOpenLinks(False)
+        self.setAcceptDrops(False)
+        self.viewport().setAutoFillBackground(False)
+        self.anchorClicked.connect(win.on_anchor)
+        self.document().setDocumentMargin(2)
+        self.document().setDefaultStyleSheet(win.doc_css)
+        self.document().documentLayout().documentSizeChanged.connect(self._fit)
+        self.setFixedHeight(24)
+
+    def _fit(self, *_):
+        self.document().setTextWidth(self.viewport().width())
+        h = math.ceil(self.document().size().height())
+        if h != self.height():
+            self.setFixedHeight(h)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._fit()
+
+    def wheelEvent(self, e):
+        e.ignore()  # lascia scorrere l'area dei messaggi
+
+
+class UserMessage(QWidget):
+    def __init__(self, win: "MainWindow", m: dict):
+        super().__init__()
+        self.win, self.m = win, m
+        self._done = False
+        self._natural = 0
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addStretch(1)
+        self.bubble = QFrame(objectName="userBubble")
+        self.bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bl = QVBoxLayout(self.bubble)
+        bl.setContentsMargins(14, 10, 14, 10)
+        bl.setSpacing(6)
+        self.thumbs = QHBoxLayout()
+        self.thumbs.setSpacing(6)
+        bl.addLayout(self.thumbs)
+        self.files = QLabel(objectName="files")
+        self.files.setWordWrap(True)
+        bl.addWidget(self.files)
+        self.text = RichView(win)
+        bl.addWidget(self.text)
+        lay.addWidget(self.bubble, 1000)
+
+    def update_content(self, streaming: bool, is_last: bool):
+        if self._done:  # i messaggi dell'utente non cambiano
+            return
+        self._done = True
+        m = self.m
+        fm = QFontMetrics(self.text.font())
+        widths = [0]
+        thumbs_w = 0
+        for b64 in m.get("images", []):
+            lbl = QLabel()
+            pm = self.win.thumbnail(b64, 200)
+            lbl.setPixmap(pm)
+            self.thumbs.addWidget(lbl)
+            thumbs_w += int(pm.width() / pm.devicePixelRatio()) + 6
+        self.thumbs.addStretch(1)
+        widths.append(thumbs_w)
+        # le immagini sono gia' mostrate come anteprima: si elencano solo gli altri file
+        files = [n for n in m.get("attachments", []) if Path(n).suffix.lower() not in IMAGE_EXT]
+        self.files.setText("<br>".join(f"📄 {html.escape(n)}" for n in files))
+        self.files.setVisible(bool(files))
+        widths += [fm.horizontalAdvance(f"📄 {n}") for n in files]
+        display = m.get("display") or ""
+        self.text.setHtml(esc_br(display))
+        self.text.setVisible(bool(display))
+        widths += [fm.horizontalAdvance(line) + 10 for line in display.split("\n")]
+        self._natural = max(widths) + 30
+        self._fit_width()
+
+    def _fit_width(self):
+        self.bubble.setMaximumWidth(max(90, min(self._natural, int(self.width() * 0.8))))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._fit_width()
+
+
+class AssistantMessage(QWidget):
+    def __init__(self, win: "MainWindow", m: dict):
+        super().__init__()
+        self.win, self.m = win, m
+        self._key = None
+        self._thinking = ""
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        avatar = QLabel()
+        avatar.setPixmap(win.windowIcon().pixmap(22, 22))
+        self.model_lbl = QLabel(objectName="modelTag")
+        head.addWidget(avatar)
+        head.addWidget(self.model_lbl)
+        head.addStretch(1)
+        v.addLayout(head)
+
+        self.think_btn = QToolButton(objectName="thinkToggle")
+        self.think_btn.setCheckable(True)
+        self.think_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.think_btn.toggled.connect(self._toggle_think)
+        v.addWidget(self.think_btn)
+        self.think_box = QFrame(objectName="thinkBox")
+        tl = QVBoxLayout(self.think_box)
+        tl.setContentsMargins(12, 8, 12, 8)
+        self.think_view = RichView(win)
+        self.think_view.setFont(scaled_font(self.think_view.font(), 0.92))
+        tl.addWidget(self.think_view)
+        self.think_box.setVisible(False)
+        v.addWidget(self.think_box)
+
+        self.body = RichView(win)
+        v.addWidget(self.body)
+
+        self.actions = QWidget()
+        al = QHBoxLayout(self.actions)
+        al.setContentsMargins(0, 0, 0, 0)
+        al.setSpacing(2)
+        self.btn_copy = self._action_button(("edit-copy",), "Copia", self.copy)
+        self.btn_regen = self._action_button(("view-refresh",), "Rigenera", win.regenerate)
+        self.stats = QLabel(objectName="stats")
+        self.stats.setFont(scaled_font(self.stats.font(), 0.9))
+        al.addWidget(self.btn_copy)
+        al.addWidget(self.btn_regen)
+        al.addSpacing(6)
+        al.addWidget(self.stats)
+        al.addStretch(1)
+        v.addWidget(self.actions)
+
+    def _action_button(self, icons, text, slot) -> QToolButton:
+        b = QToolButton(objectName="msgBtn")
+        b.setText(text)
+        b.setIcon(theme_icon(*icons))
+        b.setIconSize(QSize(14, 14))
+        b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.clicked.connect(slot)
+        return b
+
+    def _think_label(self, streaming: bool, has_body: bool):
+        arrow = "▾" if self.think_btn.isChecked() else "▸"
+        word = "Sta ragionando…" if streaming and not has_body else "Ragionamento"
+        self.think_btn.setText(f"{arrow}  💭 {word}")
+
+    def _toggle_think(self, on: bool):
+        self.think_box.setVisible(on)
+        if on:
+            self.think_view.setHtml(esc_br(self._thinking))
+        self._key = None
+        self.win._render()
+
+    def update_content(self, streaming: bool, is_last: bool):
+        m = self.m
+        show = bool(self.win.settings["show_thinking"])
+        key = (len(m.get("content", "")), len(m.get("thinking", "")), streaming, is_last, show,
+               m.get("stats"), self.think_btn.isChecked())
+        if key == self._key:
+            return
+        self._key = key
+        think_inline, body = split_think(m.get("content", ""))
+        self._thinking = (m.get("thinking", "") + ("\n" + think_inline if think_inline else "")).strip()
+        has_think = bool(self._thinking) and show
+        self.model_lbl.setText(html.escape(m.get("model") or "Assistente"))
+        self.think_btn.setVisible(has_think)
+        self.think_box.setVisible(has_think and self.think_btn.isChecked())
+        self._think_label(streaming, bool(body))
+        if self.think_box.isVisible():
+            self.think_view.setHtml(f'<span style="color:{self.win.c["muted"]}">{esc_br(self._thinking)}</span>')
+        if body:
+            self.body.setHtml(self.win.render_markdown(body))
+        elif streaming and not has_think:
+            self.body.setHtml(f'<span style="color:{self.win.c["muted"]}">●●●</span>')
+        self.body.setVisible(bool(body) or (streaming and not has_think))
+        self.actions.setVisible(not streaming and bool(body))
+        self.btn_regen.setVisible(is_last)
+        self.stats.setText(m.get("stats") or "")
+
+    def copy(self):
+        QGuiApplication.clipboard().setText(split_think(self.m.get("content", ""))[1])
+        self.btn_copy.setText("Copiato ✓")
+        QTimer.singleShot(1500, lambda: self.btn_copy.setText("Copia"))
+
+
 class ModelsDialog(QDialog):
     changed = Signal()
     SUGGESTED = [
@@ -513,34 +1087,41 @@ class ModelsDialog(QDialog):
         self.win = win
         self.puller: PullWorker | None = None
         self.setWindowTitle("Modelli")
-        self.resize(780, 480)
+        self.resize(820, 520)
         lay = QVBoxLayout(self)
+        lay.setSpacing(10)
 
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Modello", "Dimensione", "Parametri", "Quantizzazione", "Modificato"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(self.fontMetrics().height() + 14)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         lay.addWidget(self.table)
 
         row = QHBoxLayout()
-        self.btn_refresh = QPushButton("Aggiorna")
-        self.btn_unload = QPushButton("Scarica dalla memoria")
-        self.btn_delete = QPushButton("Elimina")
+        self.btn_refresh = QPushButton(theme_icon("view-refresh"), "Aggiorna")
+        self.btn_unload = QPushButton(theme_icon("media-eject", "go-down"), "Scarica dalla memoria")
+        self.btn_delete = QPushButton(theme_icon("edit-delete"), "Elimina")
         for b in (self.btn_refresh, self.btn_unload, self.btn_delete):
             row.addWidget(b)
         row.addStretch(1)
         lay.addLayout(row)
 
+        lay.addWidget(QLabel("<b>Scarica un nuovo modello</b> — nomi su <a href='https://ollama.com/library'>ollama.com/library</a>",
+                             openExternalLinks=True))
         box = QHBoxLayout()
         self.name = QComboBox()
         self.name.setEditable(True)
         self.name.addItems(self.SUGGESTED)
         self.name.setCurrentText("")
         self.name.lineEdit().setPlaceholderText("Nome del modello da scaricare, es. llama3.2:3b")
-        self.btn_pull = QPushButton("Scarica")
+        self.btn_pull = QPushButton(theme_icon("download", "folder-download"), "Scarica")
         self.btn_cancel = QPushButton("Annulla")
         self.btn_cancel.setEnabled(False)
         box.addWidget(self.name, 1)
@@ -565,15 +1146,12 @@ class ModelsDialog(QDialog):
 
     def selected(self) -> str | None:
         r = self.table.currentRow()
-        return self.table.item(r, 0).text() if r >= 0 else None
+        return self.table.item(r, 0).data(Qt.ItemDataRole.UserRole) if r >= 0 else None
 
     def refresh(self):
         def ok(models):
-            ok_ps = {}
-
             def fill(ps):
-                loaded = {m.get("name") for m in ps}
-                self._fill(models, loaded)
+                self._fill(models, {m.get("name") for m in ps})
 
             run_async(self.win.api.ps, fill, lambda _m: self._fill(models, set()))
 
@@ -584,12 +1162,8 @@ class ModelsDialog(QDialog):
         for m in sorted(models, key=lambda m: m.get("name", "")):
             d = m.get("details") or {}
             name = m.get("name", "")
-            if name in loaded:
-                name_txt = name
-            else:
-                name_txt = name
             vals = [
-                name_txt,
+                ("● " if name in loaded else "") + name,
                 human_size(m.get("size", 0)),
                 d.get("parameter_size", ""),
                 d.get("quantization_level", ""),
@@ -599,14 +1173,13 @@ class ModelsDialog(QDialog):
             self.table.insertRow(r)
             for c, v in enumerate(vals):
                 it = QTableWidgetItem(v)
-                if name in loaded:
-                    f = it.font()
-                    f.setBold(True)
-                    it.setFont(f)
-                    if c == 0:
+                if c == 0:
+                    it.setData(Qt.ItemDataRole.UserRole, name)
+                    if name in loaded:
                         it.setToolTip("In memoria")
+                        it.setForeground(QColor("#22c55e"))
                 self.table.setItem(r, c, it)
-        self.lbl.setText(f"{len(models)} modelli installati" + (f" · in memoria (grassetto): {', '.join(sorted(loaded))}" if loaded else ""))
+        self.lbl.setText(f"{len(models)} modelli installati" + (f" · in memoria (●): {', '.join(sorted(loaded))}" if loaded else ""))
 
     def delete_selected(self):
         n = self.selected()
@@ -690,7 +1263,7 @@ class SettingsDialog(QDialog):
         self.win = win
         s = win.settings
         self.setWindowTitle("Impostazioni")
-        self.resize(560, 520)
+        self.resize(580, 520)
         lay = QVBoxLayout(self)
         tabs = QTabWidget()
         lay.addWidget(tabs)
@@ -698,6 +1271,7 @@ class SettingsDialog(QDialog):
         # --- generale
         g = QWidget()
         f = QFormLayout(g)
+        f.setVerticalSpacing(10)
         self.host = QLineEdit(s["host"])
         self.btn_test = QPushButton("Verifica")
         self.test_lbl = QLabel("")
@@ -793,12 +1367,24 @@ ad esempio <code>http://192.168.1.50:11434</code>.</p>
 
 
 # --------------------------------------------------------------------------- finestra principale
+SUGGESTIONS = [
+    ("Spiegami un concetto", "come funziona la crittografia a chiave pubblica",
+     "Spiegami in modo semplice come funziona la crittografia a chiave pubblica."),
+    ("Scrivi del codice", "uno script Python che ordina i file per data",
+     "Scrivi uno script Python che sposta i file di una cartella in sottocartelle per anno e mese."),
+    ("Riassumi un testo", "incolla un testo o trascina qui un PDF",
+     "Riassumi il testo seguente in pochi punti chiave:\n\n"),
+    ("Dammi qualche idea", "per un weekend fuori porta in autunno",
+     "Dammi cinque idee per un weekend fuori porta in autunno, con pro e contro."),
+]
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(make_icon())
-        self.resize(1180, 760)
+        self.resize(1180, 780)
         self.setAcceptDrops(True)
 
         self.settings = Settings()
@@ -813,17 +1399,23 @@ class MainWindow(QMainWindow):
         self.caps: set[str] | None = None
         self.connected = False
         self.error_text = ""
-        self._html_cache: dict = {}
+        self._rows: list[QWidget] = []  # widget dei messaggi della chat mostrata
+        self._rendered_chat: dict | None = None
         self._img_cache: dict = {}
+        self._codes: dict = {}  # blocchi di codice copiabili, per chiave
+        self._stick = True  # la vista segue la fine della chat
         self._dirty = False
+        self._dragging = False
         self._really_quit = False
         self.tray: QSystemTrayIcon | None = None
 
-        self.c = self._colors()
+        self.c = theme_colors()
+        self.doc_css = doc_css(self.c)
         self._build_ui()
-        self._build_menu()
+        self._build_actions()
         self._build_tray()
         self._restore_geometry()
+        self._apply_theme()
 
         self.render_timer = QTimer(self)
         self.render_timer.setInterval(60)
@@ -834,151 +1426,282 @@ class MainWindow(QMainWindow):
         self.poll_timer.timeout.connect(self.check_server)
         self.poll_timer.start()
 
-        QShortcut(QKeySequence("Ctrl+N"), self, self.new_chat_action)
-        QShortcut(QKeySequence("Ctrl+,"), self, self.open_settings)
-        QShortcut(QKeySequence("Ctrl+L"), self, lambda: self.input.setFocus())
-        QShortcut(QKeySequence("Esc"), self, self.stop_generation)
-
         self.refresh_sidebar()
         self._render()
         self.check_server()
         self.refresh_models()
+        self.input.setFocus()
 
     # ---- costruzione UI
-    def _colors(self) -> dict:
-        dark = QApplication.palette().window().color().lightness() < 128
-        if dark:
-            return dict(dark=True, bubble="#303541", think="#262a33", muted="#9aa0ab", err="#f87171",
-                        codebg="#1b1d23", codefg="#e4e4e7", link="#7cb7ff")
-        return dict(dark=False, bubble="#e8ebf2", think="#f1f3f6", muted="#6b7280", err="#b91c1c",
-                    codebg="#f3f4f6", codefg="#111827", link="#1d4ed8")
+    def _icon_button(self, icons, fallback: str, tip: str, slot=None) -> QToolButton:
+        b = QToolButton(objectName="iconBtn")
+        ic = theme_icon(*icons)
+        if ic.isNull():
+            b.setText(fallback)
+        else:
+            b.setIcon(ic)
+            b.setIconSize(QSize(18, 18))
+        b.setToolTip(tip)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        if slot:
+            b.clicked.connect(slot)
+        return b
+
+    def _side_button(self, icons, text: str, slot) -> QPushButton:
+        b = QPushButton(theme_icon(*icons), "  " + text, objectName="sideBtn")
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.clicked.connect(slot)
+        return b
 
     def _build_ui(self):
         split = QSplitter(Qt.Orientation.Horizontal)
+        split.setHandleWidth(1)
+        split.setChildrenCollapsible(False)
         self.setCentralWidget(split)
+        self.splitter = split
 
-        # barra laterale
-        side = QWidget()
+        # --- barra laterale
+        self.sidebar = side = QWidget(objectName="sidebar")
+        side.setMinimumWidth(220)
         sl = QVBoxLayout(side)
-        sl.setContentsMargins(8, 8, 8, 8)
-        self.btn_new = QPushButton("＋  Nuova chat")
+        sl.setContentsMargins(12, 14, 12, 12)
+        sl.setSpacing(10)
+        brand = QHBoxLayout()
+        logo = QLabel()
+        logo.setPixmap(self.windowIcon().pixmap(26, 26))
+        brand.addWidget(logo)
+        brand.addWidget(QLabel("Ollama", objectName="brand"))
+        brand.addStretch(1)
+        brand.addWidget(self._icon_button(("sidebar-collapse-left", "view-left-close", "go-previous"), "«",
+                                          "Nascondi la barra laterale (Ctrl+B)", self.toggle_sidebar))
+        sl.addLayout(brand)
+        self.btn_new = QPushButton(theme_icon("list-add", "document-new"), "  Nuova chat", objectName="newChat")
+        self.btn_new.setToolTip("Nuova chat (Ctrl+N)")
+        self.btn_new.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_new.clicked.connect(self.new_chat_action)
-        self.search = QLineEdit()
+        sl.addWidget(self.btn_new)
+        self.search = QLineEdit(objectName="search")
         self.search.setPlaceholderText("Cerca nelle chat…")
         self.search.setClearButtonEnabled(True)
+        self.search.addAction(theme_icon("edit-find", "search"), QLineEdit.ActionPosition.LeadingPosition)
         self.search.textChanged.connect(self.refresh_sidebar)
-        self.chat_list = QListWidget()
+        sl.addWidget(self.search)
+        self.chat_list = QListWidget(objectName="chatList")
+        self.chat_list.setItemDelegate(ChatItemDelegate(self))
+        self.chat_list.setMouseTracking(True)
+        self.chat_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.chat_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.chat_list.customContextMenuRequested.connect(self.chat_menu)
         self.chat_list.currentItemChanged.connect(self.on_chat_item)
-        row = QHBoxLayout()
-        b1 = QPushButton("Modelli")
-        b1.clicked.connect(self.open_models)
-        b2 = QPushButton("Impostazioni")
-        b2.clicked.connect(self.open_settings)
-        row.addWidget(b1)
-        row.addWidget(b2)
-        sl.addWidget(self.btn_new)
-        sl.addWidget(self.search)
         sl.addWidget(self.chat_list, 1)
-        sl.addLayout(row)
+        sl.addWidget(self._side_button(("run-build", "package-x-generic", "applications-other"), "Modelli", self.open_models))
+        sl.addWidget(self._side_button(("configure", "preferences-system", "settings-configure"), "Impostazioni", self.open_settings))
+        srow = QHBoxLayout()
+        srow.setContentsMargins(8, 4, 0, 0)
+        self.conn_lbl = QLabel("", objectName="conn")
+        self.conn_lbl.setFont(scaled_font(self.conn_lbl.font(), 0.9))
+        self.btn_start = QPushButton("Avvia", objectName="startBtn")
+        self.btn_start.setToolTip("Avvia il server Ollama")
+        self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_start.clicked.connect(self.start_server)
+        self.btn_start.setVisible(False)
+        srow.addWidget(self.conn_lbl, 1)
+        srow.addWidget(self.btn_start)
+        sl.addLayout(srow)
         split.addWidget(side)
 
-        # area chat
-        right = QWidget()
-        rl = QVBoxLayout(right)
-        rl.setContentsMargins(10, 8, 10, 8)
-        top = QHBoxLayout()
-        self.model_combo = QComboBox()
-        self.model_combo.setMinimumWidth(240)
-        self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        # --- area principale
+        main = QWidget(objectName="main")
+        ml = QVBoxLayout(main)
+        ml.setContentsMargins(0, 0, 0, 0)
+        ml.setSpacing(0)
+
+        header = QWidget(objectName="header")
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(10, 8, 10, 4)
+        hl.setSpacing(4)
+        self.btn_show_side = self._icon_button(("sidebar-expand-left", "view-left-new", "go-next"), "»",
+                                               "Mostra la barra laterale (Ctrl+B)", self.toggle_sidebar)
+        self.btn_new_hdr = self._icon_button(("document-new", "list-add"), "＋", "Nuova chat (Ctrl+N)", self.new_chat_action)
+        self.model_combo = MenuPicker(lambda t: t or "Nessun modello", [("Gestisci modelli…", self.open_models)])
+        self.model_combo.setToolTip("Modello")
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
-        self.think_combo = QComboBox()
-        self.think_combo.addItems(["Ragionamento: auto", "Ragionamento: attivo", "Ragionamento: disattivo"])
-        self.think_combo.setCurrentIndex(int(self.settings["think_mode"]))
-        self.think_combo.currentIndexChanged.connect(self.on_think_changed)
-        top.addWidget(QLabel("Modello:"))
-        top.addWidget(self.model_combo)
-        top.addWidget(self.think_combo)
-        top.addStretch(1)
-        rl.addLayout(top)
+        self.btn_menu = self._icon_button(("application-menu", "open-menu", "overflow-menu"), "⋮", "Menu")
+        self.btn_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        hl.addWidget(self.btn_show_side)
+        hl.addWidget(self.btn_new_hdr)
+        hl.addWidget(self.model_combo)
+        hl.addStretch(1)
+        hl.addWidget(self.btn_menu)
+        ml.addWidget(header)
 
-        self.view = QTextBrowser()
-        self.view.setOpenExternalLinks(True)
-        self.view.setAcceptDrops(False)
-        f = self.view.font()
-        f.setPointSize(max(f.pointSize(), 11))
-        self.view.setFont(f)
-        self.view.document().setDefaultStyleSheet(
-            f"pre {{ background-color:{self.c['codebg']}; color:{self.c['codefg']}; font-family:monospace; }}"
-            f"code {{ font-family:monospace; background-color:{self.c['codebg']}; }}"
-            f"a {{ color:{self.c['link']}; }}"
-        )
-        rl.addWidget(self.view, 1)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self._build_hero())
+        self.scroll = QScrollArea(objectName="chatScroll")
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        canvas = QWidget(objectName="chatCanvas")
+        cl = QHBoxLayout(canvas)
+        cl.setContentsMargins(20, 12, 20, 24)
+        self.column = QWidget()
+        self.column.setMaximumWidth(COLUMN_WIDTH)
+        self.col_lay = QVBoxLayout(self.column)
+        self.col_lay.setContentsMargins(0, 0, 0, 0)
+        self.col_lay.setSpacing(22)
+        self.error_box = QFrame(objectName="errorBox")
+        el = QHBoxLayout(self.error_box)
+        el.setContentsMargins(14, 10, 10, 10)
+        self.error_lbl = QLabel(objectName="errorText")
+        self.error_lbl.setWordWrap(True)
+        self.error_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        retry = QPushButton("Riprova", objectName="retry")
+        retry.setCursor(Qt.CursorShape.PointingHandCursor)
+        retry.clicked.connect(self.regenerate)
+        el.addWidget(self.error_lbl, 1)
+        el.addWidget(retry, 0, Qt.AlignmentFlag.AlignTop)
+        self.error_box.setVisible(False)
+        self.col_lay.addWidget(self.error_box)
+        self.col_lay.addStretch(1)
+        cl.addStretch(1)
+        cl.addWidget(self.column, 100)
+        cl.addStretch(1)
+        self.scroll.setWidget(canvas)
+        sb = self.scroll.verticalScrollBar()
+        sb.valueChanged.connect(lambda v: setattr(self, "_stick", v >= sb.maximum() - 40))
+        sb.rangeChanged.connect(lambda _lo, hi: sb.setValue(hi) if self._stick else None)
+        self.stack.addWidget(self.scroll)
+        ml.addWidget(self.stack, 1)
+        ml.addWidget(self._build_composer())
 
-        arow = QHBoxLayout()
-        self.btn_regen = QPushButton("↻ Rigenera")
-        self.btn_copy = QPushButton("⧉ Copia risposta")
-        self.btn_regen.clicked.connect(self.regenerate)
-        self.btn_copy.clicked.connect(self.copy_last)
-        arow.addStretch(1)
-        arow.addWidget(self.btn_regen)
-        arow.addWidget(self.btn_copy)
-        rl.addLayout(arow)
+        split.addWidget(main)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+        split.setSizes(self.settings["splitter"])
+        self.sidebar.setVisible(bool(self.settings["sidebar"]))
+        self._sync_sidebar_buttons()
 
+    def _build_hero(self) -> QWidget:
+        hero = QWidget(objectName="hero")
+        hv = QVBoxLayout(hero)
+        hv.setContentsMargins(20, 20, 20, 20)
+        hv.addStretch(2)
+        logo = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
+        logo.setPixmap(self.windowIcon().pixmap(60, 60))
+        hv.addWidget(logo)
+        hv.addSpacing(10)
+        hv.addWidget(QLabel("Come posso aiutarti?", objectName="heroTitle", alignment=Qt.AlignmentFlag.AlignCenter))
+        self.hero_sub = QLabel(objectName="heroSub", alignment=Qt.AlignmentFlag.AlignCenter)
+        hv.addWidget(self.hero_sub)
+        hv.addSpacing(24)
+        grid_w = QWidget()
+        grid_w.setMaximumWidth(640)
+        grid = QGridLayout(grid_w)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(10)
+        for i, (title, sub, prompt) in enumerate(SUGGESTIONS):
+            b = QPushButton(f"{title}\n{sub}", objectName="suggestion")
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            b.clicked.connect(lambda _=False, p=prompt: self.use_prompt(p))
+            grid.addWidget(b, i // 2, i % 2)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(grid_w, 100)
+        row.addStretch(1)
+        hv.addLayout(row)
+        hv.addStretch(3)
+        return hero
+
+    def _build_composer(self) -> QWidget:
+        area = QWidget(objectName="composerArea")
+        outer = QHBoxLayout(area)
+        outer.setContentsMargins(20, 4, 20, 10)
+        col = QWidget()
+        col.setMaximumWidth(COLUMN_WIDTH)
+        cv = QVBoxLayout(col)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(6)
+
+        self.composer = QFrame(objectName="composer")
+        v = QVBoxLayout(self.composer)
+        v.setContentsMargins(14, 10, 10, 8)
+        v.setSpacing(4)
         self.chips = QWidget()
         self.chips_lay = QHBoxLayout(self.chips)
-        self.chips_lay.setContentsMargins(0, 0, 0, 0)
+        self.chips_lay.setContentsMargins(0, 0, 0, 4)
+        self.chips_lay.setSpacing(6)
         self.chips.setVisible(False)
-        rl.addWidget(self.chips)
-
-        irow = QHBoxLayout()
-        irow.setAlignment(Qt.AlignmentFlag.AlignBottom)
-        self.btn_attach = QPushButton("📎")
-        self.btn_attach.setToolTip("Allega file o immagini (si possono anche trascinare nella finestra)")
-        self.btn_attach.setFixedSize(46, 46)
-        self.btn_attach.clicked.connect(self.pick_files)
+        v.addWidget(self.chips)
         self.input = InputEdit()
         self.input.submit.connect(self.send_or_ignore)
         self.input.image_pasted.connect(lambda img: self.add_qimage(img, "immagine-incollata.png"))
         self.input.files_pasted.connect(lambda fs: [self.add_file(x) for x in fs])
-        self.btn_send = QPushButton("Invia ➤")
-        self.btn_send.setFixedHeight(46)
-        self.btn_send.setMinimumWidth(90)
+        self.input.focus_changed.connect(lambda _f: self._sync_composer())
+        self.input.textChanged.connect(self._update_send)
+        v.addWidget(self.input)
+        bottom = QHBoxLayout()
+        bottom.setSpacing(4)
+        self.btn_attach = self._icon_button(("mail-attachment", "paperclip", "document-open"), "📎",
+                                            "Allega file o immagini (si possono anche trascinare nella finestra)", self.pick_files)
+        self.think_combo = MenuPicker(lambda t: f"💭 Ragionamento: {t.lower()}")
+        self.think_combo.addItems(["Auto", "Attivo", "Disattivo"])
+        self.think_combo.setCurrentIndex(int(self.settings["think_mode"]))
+        self.think_combo.setToolTip("Modalità ragionamento (per i modelli che la supportano)")
+        self.think_combo.currentIndexChanged.connect(self.on_think_changed)
+        self.btn_send = QToolButton(objectName="send")
+        self.btn_send.setFixedSize(34, 34)
+        self.btn_send.setIconSize(QSize(20, 20))
+        self.btn_send.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_send.clicked.connect(self.send_or_stop)
-        irow.addWidget(self.btn_attach)
-        irow.addWidget(self.input, 1)
-        irow.addWidget(self.btn_send)
-        rl.addLayout(irow)
-        split.addWidget(right)
-        split.setStretchFactor(0, 0)
-        split.setStretchFactor(1, 1)
-        split.setSizes(self.settings["splitter"])
-        self.splitter = split
+        bottom.addWidget(self.btn_attach)
+        bottom.addWidget(self.think_combo)
+        bottom.addStretch(1)
+        bottom.addWidget(self.btn_send)
+        v.addLayout(bottom)
+        cv.addWidget(self.composer)
 
-        # barra di stato
-        self.conn_lbl = QLabel("")
-        self.btn_start = QPushButton("Avvia Ollama")
-        self.btn_start.setFlat(True)
-        self.btn_start.clicked.connect(self.start_server)
-        self.btn_start.setVisible(False)
-        self.statusBar().addPermanentWidget(self.btn_start)
-        self.statusBar().addPermanentWidget(self.conn_lbl)
+        self._hint_default = "Invio per inviare · Maiusc+Invio per andare a capo · trascina qui file, immagini e PDF"
+        self.hint = QLabel(self._hint_default, objectName="hint", alignment=Qt.AlignmentFlag.AlignCenter)
+        self.hint.setFont(scaled_font(self.hint.font(), 0.88))
+        self.hint_timer = QTimer(self, singleShot=True)
+        self.hint_timer.timeout.connect(lambda: self.hint.setText(self._hint_default))
+        cv.addWidget(self.hint)
 
-    def _build_menu(self):
-        mb = self.menuBar()
-        m = mb.addMenu("&File")
-        a = QAction("Nuova chat", self, shortcut="Ctrl+N", triggered=self.new_chat_action)
-        m.addAction(a)
-        m.addAction(QAction("Esporta chat in Markdown…", self, triggered=lambda: self.export_chat(self.chat)))
+        outer.addStretch(1)
+        outer.addWidget(col, 100)
+        outer.addStretch(1)
+        return area
+
+    def _build_actions(self):
+        def act(text, slot, shortcut=None, icons=()):
+            a = QAction(theme_icon(*icons), text, self)
+            if shortcut:
+                a.setShortcut(QKeySequence(shortcut))
+            a.triggered.connect(slot)
+            self.addAction(a)  # le scorciatoie funzionano anche a menu chiuso
+            return a
+
+        m = QMenu(self)
+        m.addAction(act("Nuova chat", self.new_chat_action, "Ctrl+N", ("document-new",)))
+        m.addAction(act("Rinomina chat…", lambda: self.rename_chat(self.chat), "F2", ("edit-rename",)))
+        m.addAction(act("Esporta chat in Markdown…", lambda: self.export_chat(self.chat), "Ctrl+E", ("document-export", "document-save-as")))
+        m.addAction(act("Elimina chat", lambda: self.delete_chat(self.chat), None, ("edit-delete",)))
         m.addSeparator()
-        m.addAction(QAction("Esci", self, shortcut="Ctrl+Q", triggered=self.quit_app))
-        s = mb.addMenu("&Server")
-        s.addAction(QAction("Avvia Ollama", self, triggered=self.start_server))
-        s.addAction(QAction("Modelli…", self, triggered=self.open_models))
-        s.addAction(QAction("Impostazioni…", self, triggered=self.open_settings))
-        h = mb.addMenu("&Aiuto")
-        h.addAction(QAction("Informazioni", self, triggered=self.about))
+        m.addAction(act("Rigenera risposta", self.regenerate, "Ctrl+R", ("view-refresh",)))
+        m.addAction(act("Copia ultima risposta", self.copy_last, "Ctrl+Shift+C", ("edit-copy",)))
+        m.addSeparator()
+        m.addAction(act("Modelli…", self.open_models, "Ctrl+M", ("run-build", "package-x-generic")))
+        m.addAction(act("Impostazioni…", self.open_settings, "Ctrl+,", ("configure", "preferences-system")))
+        m.addAction(act("Avvia server Ollama", self.start_server, None, ("media-playback-start",)))
+        m.addAction(act("Mostra/nascondi barra laterale", self.toggle_sidebar, "Ctrl+B", ("view-split-left-right",)))
+        m.addSeparator()
+        m.addAction(act("Informazioni", self.about, None, ("help-about",)))
+        m.addAction(act("Esci", self.quit_app, "Ctrl+Q", ("application-exit",)))
+        self.btn_menu.setMenu(m)
+        QShortcut(QKeySequence("Ctrl+L"), self, lambda: self.input.setFocus())
+        QShortcut(QKeySequence("Esc"), self, self.stop_generation)
 
     def _build_tray(self):
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -1003,6 +1726,38 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    # ---- tema
+    def _apply_theme(self):
+        self.setStyleSheet(build_qss(self.c))
+        self._update_send()
+
+    def changeEvent(self, e):
+        if e.type() == QEvent.Type.ApplicationPaletteChange and hasattr(self, "stack"):
+            QTimer.singleShot(0, self._on_palette_changed)
+        super().changeEvent(e)
+
+    def _on_palette_changed(self):
+        c = theme_colors()
+        if c == self.c:
+            return
+        self.c = c
+        self.doc_css = doc_css(c)
+        self._apply_theme()
+        self._clear_rows()
+        self._render()
+        self.chat_list.viewport().update()
+
+    def _sync_composer(self):
+        active = self.input.hasFocus() or self._dragging
+        if self.composer.property("active") != active:
+            self.composer.setProperty("active", active)
+            self.composer.style().unpolish(self.composer)
+            self.composer.style().polish(self.composer)
+
+    def notify(self, msg: str, ms: int = 4000):
+        self.hint.setText(msg)
+        self.hint_timer.start(ms)
+
     # ---- finestra / uscita
     def show_normal(self):
         self.showNormal()
@@ -1022,7 +1777,8 @@ class MainWindow(QMainWindow):
             self.worker.cancel()
             self.worker.wait(3000)
         self.settings["geometry"] = bytes(self.saveGeometry().toBase64()).decode()
-        self.settings["splitter"] = self.splitter.sizes()
+        if not self.sidebar.isHidden():
+            self.settings["splitter"] = self.splitter.sizes()
         self.settings.save()
         if self.gen_chat:
             self.store.save(self.gen_chat)
@@ -1032,6 +1788,19 @@ class MainWindow(QMainWindow):
     def about(self):
         QMessageBox.about(self, APP_NAME, f"<b>{APP_NAME}</b><br>Interfaccia desktop per Ollama su Linux.<br>Server: {self.api.base}")
 
+    def toggle_sidebar(self):
+        visible = not self.sidebar.isHidden()
+        if visible:
+            self.settings["splitter"] = self.splitter.sizes()
+        self.sidebar.setVisible(not visible)
+        self.settings["sidebar"] = not visible
+        self._sync_sidebar_buttons()
+
+    def _sync_sidebar_buttons(self):
+        hidden = self.sidebar.isHidden()
+        self.btn_show_side.setVisible(hidden)
+        self.btn_new_hdr.setVisible(hidden)
+
     # ---- server
     def check_server(self):
         run_async(self.api.version, self._srv_ok, self._srv_fail)
@@ -1039,14 +1808,16 @@ class MainWindow(QMainWindow):
     def _srv_ok(self, v):
         first = not self.connected
         self.connected = True
-        self.conn_lbl.setText(f'<span style="color:#22c55e">●</span> Ollama {v} · {self.api.base}')
+        self.conn_lbl.setText(f'<span style="color:#22c55e">●</span>&nbsp; Ollama {v}')
+        self.conn_lbl.setToolTip(f"Connesso a {self.api.base}")
         self.btn_start.setVisible(False)
         if first:
             self.refresh_models()
 
     def _srv_fail(self, _m):
         self.connected = False
-        self.conn_lbl.setText(f'<span style="color:#ef4444">●</span> Ollama non raggiungibile · {self.api.base}')
+        self.conn_lbl.setText('<span style="color:#ef4444">●</span>&nbsp; Non connesso')
+        self.conn_lbl.setToolTip(f"Ollama non raggiungibile su {self.api.base}")
         host = urlparse(self.api.base).hostname or ""
         self.btn_start.setVisible(host in ("127.0.0.1", "localhost", "::1"))
 
@@ -1068,7 +1839,7 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "Errore", str(e))
             return
-        self.statusBar().showMessage("Avvio di Ollama…", 4000)
+        self.notify("Avvio di Ollama…")
         QTimer.singleShot(2500, self.check_server)
 
     # ---- modelli
@@ -1088,7 +1859,8 @@ class MainWindow(QMainWindow):
         self.model_combo.blockSignals(False)
         self.on_model_changed(self.model_combo.currentText())
         if not names:
-            self.statusBar().showMessage("Nessun modello installato: apri «Modelli» per scaricarne uno.", 8000)
+            self.notify("Nessun modello installato: apri «Modelli» per scaricarne uno.", 8000)
+        self._render()
 
     def on_model_changed(self, name: str):
         if not name:
@@ -1096,7 +1868,7 @@ class MainWindow(QMainWindow):
         self.chat["model"] = name
         self.settings["last_model"] = name
         self.caps = None
-        self.think_combo.setEnabled(True)
+        self.think_combo.setVisible(True)
         self.btn_attach.setToolTip("Allega file o immagini (si possono anche trascinare nella finestra)")
 
         def ok(info):
@@ -1106,11 +1878,12 @@ class MainWindow(QMainWindow):
             if caps is None:
                 return
             self.caps = set(caps)
-            self.think_combo.setEnabled("thinking" in self.caps)
+            self.think_combo.setVisible("thinking" in self.caps)
             tip = "Allega file" + (" o immagini" if "vision" in self.caps else " (questo modello non supporta le immagini)")
             self.btn_attach.setToolTip(tip)
 
         run_async(lambda: self.api.show(name), ok, lambda _m: None)
+        self._render()
 
     def on_think_changed(self, i: int):
         self.settings["think_mode"] = i
@@ -1127,20 +1900,46 @@ class MainWindow(QMainWindow):
             self.connected = False
             self.check_server()
             self.refresh_models()
-            self._html_cache.clear()
+            self._clear_rows()
             self._render()
 
     # ---- sidebar / cronologia
+    @staticmethod
+    def _day_group(ts: float, today: float) -> str:
+        if ts >= today:
+            return "Oggi"
+        if ts >= today - 86400:
+            return "Ieri"
+        if ts >= today - 6 * 86400:
+            return "Ultimi 7 giorni"
+        if ts >= today - 29 * 86400:
+            return "Ultimi 30 giorni"
+        return "Meno recenti"
+
     def refresh_sidebar(self):
         q = self.search.text().strip().lower()
+        lt = time.localtime()
+        today = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
         self.chat_list.blockSignals(True)
         self.chat_list.clear()
+        group = None
         for c in sorted(self.chats, key=lambda c: -c.get("updated", 0)):
             if q and q not in c["title"].lower() and not any(q in (m.get("display") or m.get("content", "")).lower() for m in c["messages"]):
                 continue
+            ts = c.get("updated", 0)
+            g = self._day_group(ts, today)
+            if g != group:
+                group = g
+                h = QListWidgetItem(g)
+                h.setFlags(Qt.ItemFlag.NoItemFlags)
+                h.setData(ROLE_HEADER, True)
+                self.chat_list.addItem(h)
+            when = time.strftime("%H:%M" if ts >= today - 86400 else "%d/%m/%Y", time.localtime(ts))
+            sub = "● sta scrivendo…" if c is self.gen_chat else f"{c.get('model', '')} · {when}"
             it = QListWidgetItem(c["title"])
-            it.setData(Qt.ItemDataRole.UserRole, c["id"])
-            it.setToolTip(f"{c.get('model', '')} · {time.strftime('%d/%m/%Y %H:%M', time.localtime(c.get('updated', 0)))}")
+            it.setData(ROLE_ID, c["id"])
+            it.setData(ROLE_SUB, sub)
+            it.setToolTip(f"{c['title']}\n{c.get('model', '')} · {time.strftime('%d/%m/%Y %H:%M', time.localtime(ts))}")
             self.chat_list.addItem(it)
             if c["id"] == self.chat["id"]:
                 self.chat_list.setCurrentItem(it)
@@ -1149,40 +1948,45 @@ class MainWindow(QMainWindow):
     def on_chat_item(self, cur, _prev):
         if not cur:
             return
-        cid = cur.data(Qt.ItemDataRole.UserRole)
-        for c in self.chats:
-            if c["id"] == cid:
-                self.select_chat(c)
-                return
+        c = self.chat_by_item(cur)
+        if c:
+            self.select_chat(c)
 
     def chat_by_item(self, item) -> dict | None:
-        cid = item.data(Qt.ItemDataRole.UserRole)
-        return next((c for c in self.chats if c["id"] == cid), None)
+        cid = item.data(ROLE_ID)
+        return next((c for c in self.chats if c["id"] == cid), None) if cid else None
 
     def chat_menu(self, pos):
         item = self.chat_list.itemAt(pos)
-        if not item:
-            return
-        c = self.chat_by_item(item)
+        c = self.chat_by_item(item) if item else None
         if not c:
             return
         m = QMenu(self)
-        a1 = m.addAction("Rinomina…")
-        a2 = m.addAction("Esporta in Markdown…")
-        a3 = m.addAction("Elimina")
-        act = m.exec(self.chat_list.mapToGlobal(pos))
+        a1 = m.addAction(theme_icon("edit-rename"), "Rinomina…")
+        a2 = m.addAction(theme_icon("document-export", "document-save-as"), "Esporta in Markdown…")
+        m.addSeparator()
+        a3 = m.addAction(theme_icon("edit-delete"), "Elimina")
+        act = m.exec(self.chat_list.viewport().mapToGlobal(pos))
         if act == a1:
-            t, ok = QInputDialog.getText(self, "Rinomina", "Titolo:", text=c["title"])
-            if ok and t.strip():
-                c["title"] = t.strip()
-                self.store.save(c)
-                self.refresh_sidebar()
+            self.rename_chat(c)
         elif act == a2:
             self.export_chat(c)
         elif act == a3:
             self.delete_chat(c)
 
+    def rename_chat(self, c: dict):
+        if c not in self.chats:
+            return
+        t, ok = QInputDialog.getText(self, "Rinomina", "Titolo:", text=c["title"])
+        if ok and t.strip():
+            c["title"] = t.strip()
+            self.store.save(c)
+            self.refresh_sidebar()
+            self._update_title()
+
     def delete_chat(self, c: dict):
+        if c not in self.chats:
+            return
         if QMessageBox.question(self, "Elimina chat", f"Eliminare «{c['title']}»?") != QMessageBox.StandardButton.Yes:
             return
         if c is self.gen_chat and self.worker:
@@ -1192,7 +1996,7 @@ class MainWindow(QMainWindow):
         self.chats = [x for x in self.chats if x is not c]
         if c is self.chat:
             self.chat = new_chat(self.model_combo.currentText())
-            self._html_cache.clear()
+            self.error_text = ""
         self.refresh_sidebar()
         self._render()
 
@@ -1209,6 +2013,7 @@ class MainWindow(QMainWindow):
             else:
                 out += ["**Assistente:**", "", split_think(m["content"])[1], ""]
         Path(path).write_text("\n".join(out), "utf-8")
+        self.notify("Chat esportata.")
 
     def new_chat_action(self):
         if not self.chat["messages"]:
@@ -1221,14 +2026,19 @@ class MainWindow(QMainWindow):
     def select_chat(self, c: dict):
         self.chat = c
         self.error_text = ""
-        self._html_cache.clear()
         m = c.get("model")
         if m and self.model_combo.findText(m) >= 0 and self.model_combo.currentText() != m:
             self.model_combo.setCurrentText(m)
         elif not m:
             c["model"] = self.model_combo.currentText()
         self._render()
-        self._update_buttons()
+
+    def use_prompt(self, prompt: str):
+        self.input.setPlainText(prompt)
+        cur = self.input.textCursor()
+        cur.movePosition(cur.MoveOperation.End)
+        self.input.setTextCursor(cur)
+        self.input.setFocus()
 
     # ---- allegati
     def pick_files(self):
@@ -1239,8 +2049,16 @@ class MainWindow(QMainWindow):
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
+            self._dragging = True
+            self._sync_composer()
+
+    def dragLeaveEvent(self, e):
+        self._dragging = False
+        self._sync_composer()
 
     def dropEvent(self, e):
+        self._dragging = False
+        self._sync_composer()
         for u in e.mimeData().urls():
             if u.isLocalFile():
                 self.add_file(u.toLocalFile())
@@ -1252,7 +2070,8 @@ class MainWindow(QMainWindow):
         buf = QBuffer(ba)
         buf.open(QIODevice.OpenModeFlag.WriteOnly)
         img.save(buf, "PNG")
-        self.attachments.append({"name": name, "kind": "image", "b64": base64.b64encode(bytes(ba)).decode()})
+        thumb = rounded_pixmap(img, 20, 4, self.devicePixelRatioF())
+        self.attachments.append({"name": name, "kind": "image", "b64": base64.b64encode(bytes(ba)).decode(), "thumb": thumb})
         self._rebuild_chips()
 
     def add_file(self, path: str):
@@ -1287,12 +2106,17 @@ class MainWindow(QMainWindow):
             if it.widget():
                 it.widget().deleteLater()
         for i, a in enumerate(self.attachments):
-            b = QPushButton(f"{'🖼' if a['kind'] == 'image' else '📄'} {a['name']}  ✕")
-            b.setFlat(False)
+            name = a["name"] if len(a["name"]) <= 28 else a["name"][:25] + "…"
+            b = QPushButton(f"{'' if a.get('thumb') else '📄 '}{name}   ✕", objectName="chip")
+            if a.get("thumb"):
+                b.setIcon(QIcon(a["thumb"]))
+            b.setToolTip(f"{a['name']} — clic per rimuovere")
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _=False, i=i: self._remove_attachment(i))
             self.chips_lay.addWidget(b)
         self.chips_lay.addStretch(1)
         self.chips.setVisible(bool(self.attachments))
+        self._update_send()
 
     def _remove_attachment(self, i: int):
         if 0 <= i < len(self.attachments):
@@ -1344,11 +2168,13 @@ class MainWindow(QMainWindow):
         self.attachments.clear()
         self._rebuild_chips()
         self.error_text = ""
+        self._stick = True
         if not self._start_generation():
             self.chat["messages"].pop()
             if not self.chat["messages"] and self.chat in self.chats:
                 self.chats.remove(self.chat)
             self.input.setPlainText(text)
+            self._render()
             return
         self.refresh_sidebar()
 
@@ -1361,8 +2187,9 @@ class MainWindow(QMainWindow):
         if not msgs:
             return
         self.error_text = ""
-        self._html_cache.clear()
+        self._stick = True
         self._start_generation()
+        self.refresh_sidebar()
 
     def _payload_messages(self, chat: dict) -> list[dict]:
         out = []
@@ -1413,7 +2240,7 @@ class MainWindow(QMainWindow):
         w.failed.connect(self.on_failed)
         w.finished.connect(self.on_worker_finished)
         self.worker = w
-        self._set_busy(True)
+        self._update_send()
         self._render()
         w.start()
         return True
@@ -1432,16 +2259,16 @@ class MainWindow(QMainWindow):
 
     @Slot(dict)
     def on_done(self, stats: dict):
-        chat = self.gen_chat
+        chat, msg = self.gen_chat, self.gen_msg
+        ec, ed = stats.get("eval_count"), stats.get("eval_duration")
+        if msg is not None and ec and ed:
+            note = " · interrotta" if stats.get("cancelled") else ""
+            msg["stats"] = f"{ec} token · {ec / (ed / 1e9):.1f} token/s{note}"
         if chat is not None:
             chat["updated"] = time.time()
-            if self.gen_msg is not None and not self.gen_msg["content"].strip() and not self.gen_msg.get("thinking"):
-                chat["messages"].remove(self.gen_msg)
+            if msg is not None and not msg["content"].strip() and not msg.get("thinking"):
+                chat["messages"].remove(msg)
             self.store.save(chat)
-        ec, ed = stats.get("eval_count"), stats.get("eval_duration")
-        if ec and ed:
-            note = " (interrotta)" if stats.get("cancelled") else ""
-            self.statusBar().showMessage(f"{ec} token · {ec / (ed / 1e9):.1f} token/s{note}", 15000)
 
     @Slot(str)
     def on_failed(self, msg: str):
@@ -1452,120 +2279,124 @@ class MainWindow(QMainWindow):
             self.store.save(chat)
         if "not found" in msg.lower():
             msg += "\nSuggerimento: scarica il modello dalla finestra «Modelli»."
-        self.error_text = msg
-        if chat is not self.chat:
-            self.statusBar().showMessage("Errore: " + msg, 10000)
+        if chat is self.chat:
+            self.error_text = msg
+        else:
+            self.notify("Errore: " + msg.splitlines()[0], 10000)
 
     @Slot()
     def on_worker_finished(self):
         self.worker = None
         self.gen_msg = None
         self.gen_chat = None
-        self._set_busy(False)
-        self._html_cache.clear()
+        self._update_send()
         self._render()
         self.refresh_sidebar()
 
-    def _set_busy(self, busy: bool):
-        self.btn_send.setText("■ Stop" if busy else "Invia ➤")
-        self._update_buttons()
-
-    def _update_buttons(self):
+    def _update_send(self):
         busy = self.worker is not None
-        has_user = any(m["role"] == "user" for m in self.chat["messages"])
-        has_ans = any(m["role"] == "assistant" and m["content"].strip() for m in self.chat["messages"])
-        self.btn_regen.setEnabled(not busy and has_user)
-        self.btn_copy.setEnabled(has_ans)
+        has_input = bool(self.input.toPlainText().strip() or self.attachments)
+        self.btn_send.setIcon(glyph_icon("stop" if busy else "send", self.c["accent_fg"]))
+        self.btn_send.setToolTip("Ferma la generazione (Esc)" if busy else "Invia (Invio)")
+        self.btn_send.setEnabled(busy or has_input)
 
     def copy_last(self):
         for m in reversed(self.chat["messages"]):
             if m["role"] == "assistant" and m["content"].strip():
                 QGuiApplication.clipboard().setText(split_think(m["content"])[1])
-                self.statusBar().showMessage("Risposta copiata negli appunti.", 3000)
+                self.notify("Risposta copiata negli appunti.", 3000)
                 return
 
     # ---- rendering
+    def on_anchor(self, url):
+        if url.scheme() == "copycode":
+            code = self._codes.get(url.path())
+            if code is not None:
+                QGuiApplication.clipboard().setText(code)
+                self.notify("Codice copiato negli appunti.", 3000)
+        else:
+            QDesktopServices.openUrl(url)
+
+    def render_markdown(self, text: str) -> str:
+        """Markdown → HTML, con i blocchi di codice incorniciati e un link per copiarli."""
+        c = self.c
+
+        def code_block(mt):
+            inner = re.sub(r"\n+(</code>)?\s*$", r"\1", mt.group(1))
+            lang = re.search(r'class="language-([\w+#.-]+)"', inner)
+            code = html.unescape(re.sub(r"<[^>]+>", "", inner))
+            key = hashlib.md5(code.encode()).hexdigest()[:16]
+            self._codes[key] = code
+            label = html.escape(lang.group(1)) if lang else "codice"
+            return (
+                f'<table width="100%" cellspacing="0" cellpadding="8" border="0" bgcolor="{c["codebg"]}">'
+                f'<tr><td><span style="color:{c["muted"]}; font-size:small">{label}</span></td>'
+                f'<td align="right"><a href="copycode:{key}"><span style="color:{c["muted"]}; font-size:small">'
+                f'⧉ Copia</span></a></td></tr>'
+                f'<tr><td colspan="2"><pre>{inner}</pre></td></tr></table>'
+            )
+
+        h = md_to_html(text).replace('<table border="1"', f'<table border="1" style="border-color:{c["border"]}"')
+        return re.sub(r"<pre[^>]*>(.*?)</pre>", code_block, h, flags=re.S)
+
+    def thumbnail(self, b64: str, side: int) -> QPixmap:
+        key = (hashlib.md5(b64[:4000].encode()).hexdigest(), len(b64), side)
+        pm = self._img_cache.get(key)
+        if pm is None:
+            pm = rounded_pixmap(QImage.fromData(base64.b64decode(b64)), side, 12, self.devicePixelRatioF())
+            self._img_cache[key] = pm
+        return pm
+
     def _tick(self):
         if self._dirty:
             self._dirty = False
             self._render()
 
-    def _img_url(self, b64: str) -> str:
-        key = "img:" + hashlib.md5(b64[:4000].encode()).hexdigest() + str(len(b64))
-        img = self._img_cache.get(key)
-        if img is None:
-            img = QImage.fromData(base64.b64decode(b64))
-            if img.width() > 260:
-                img = img.scaledToWidth(260, Qt.TransformationMode.SmoothTransformation)
-            self._img_cache[key] = img
-        self.view.document().addResource(QTextDocument.ResourceType.ImageResource, QUrl(key), img)
-        return key
+    def _clear_rows(self):
+        for w in self._rows:
+            self.col_lay.removeWidget(w)
+            w.hide()
+            w.deleteLater()
+        self._rows = []
+        self._rendered_chat = None
 
-    def _render_msg(self, m: dict, streaming: bool) -> str:
-        c = self.c
-        gap = '<p style="margin:0">&nbsp;</p>'
-        if m["role"] == "user":
-            imgs = "".join(f'<img src="{self._img_url(b)}"> ' for b in m.get("images", []))
-            if imgs:
-                imgs += "<br>"
-            # le immagini sono gia' mostrate come anteprima: si elencano solo gli altri file
-            atts = "".join(
-                f'<span style="color:{c["muted"]}">📄 {html.escape(n)}</span><br>'
-                for n in m.get("attachments", [])
-                if Path(n).suffix.lower() not in IMAGE_EXT
-            )
-            body = esc_br(m.get("display") or "")
-            return (
-                f'<table width="100%" cellspacing="0" cellpadding="10"><tr><td width="22%"></td>'
-                f'<td bgcolor="{c["bubble"]}">{imgs}{atts}{body}</td></tr></table>{gap}'
-            )
-        # assistente
-        think_inline, body = split_think(m.get("content", ""))
-        thinking = (m.get("thinking", "") + ("\n" + think_inline if think_inline else "")).strip()
-        out = ""
-        if thinking and self.settings["show_thinking"]:
-            out += (
-                f'<table width="100%" cellspacing="0" cellpadding="8"><tr><td bgcolor="{c["think"]}">'
-                f'<span style="color:{c["muted"]}"><i>💭 Ragionamento</i><br>{esc_br(thinking)}</span></td></tr></table>{gap}'
-            )
-        if body:
-            out += md_to_html(body)
-        elif streaming and not thinking:
-            out += f'<span style="color:{c["muted"]}">…</span>'
-        return out + gap
-
-    def _build_html(self) -> str:
+    def _update_title(self):
         msgs = self.chat["messages"]
-        c = self.c
-        if not msgs and not self.error_text:
-            model = self.model_combo.currentText() or "nessun modello selezionato"
-            return (
-                f'<div style="margin-top:140px" align="center"><h2>Come posso aiutarti?</h2>'
-                f'<span style="color:{c["muted"]}">Modello: {html.escape(model)}<br>'
-                f"Puoi trascinare qui file, immagini e PDF.</span></div>"
-            )
-        parts = []
-        for m in msgs:
-            streaming = m is self.gen_msg and self.worker is not None
-            key = (len(m.get("content", "")), len(m.get("thinking", "")), bool(self.settings["show_thinking"]), streaming)
-            ent = self._html_cache.get(id(m))
-            if ent and ent[0] == key:
-                parts.append(ent[1])
-                continue
-            h = self._render_msg(m, streaming)
-            self._html_cache[id(m)] = (key, h)
-            parts.append(h)
-        if self.error_text:
-            parts.append(f'<p style="color:{c["err"]}">⚠ {esc_br(self.error_text)}</p>')
-        return "".join(parts)
+        self.setWindowTitle(f"{self.chat['title']} — {APP_NAME}" if msgs else APP_NAME)
 
     def _render(self):
-        sb = self.view.verticalScrollBar()
-        at_bottom = sb.value() >= sb.maximum() - 6
-        old = sb.value()
-        self.view.setHtml(self._build_html())
-        sb.setValue(sb.maximum() if at_bottom else old)
-        self._update_buttons()
+        if self._rendered_chat is not self.chat:
+            self._clear_rows()
+            self._codes.clear()
+            self._rendered_chat = self.chat
+            self._stick = True
+        msgs = self.chat["messages"]
+        # si riusano i widget dei messaggi gia' mostrati, si aggiungono/tolgono solo le differenze
+        i = 0
+        while i < len(self._rows) and i < len(msgs) and self._rows[i].m is msgs[i]:
+            i += 1
+        for w in self._rows[i:]:
+            self.col_lay.removeWidget(w)
+            w.hide()
+            w.deleteLater()
+        del self._rows[i:]
+        for m in msgs[i:]:
+            w = UserMessage(self, m) if m["role"] == "user" else AssistantMessage(self, m)
+            self.col_lay.insertWidget(len(self._rows), w)
+            self._rows.append(w)
+        busy = self.worker is not None
+        last = msgs[-1] if msgs else None
+        for w in self._rows:
+            streaming = busy and w.m is self.gen_msg
+            w.update_content(streaming, w.m is last and not busy)
+        self.error_lbl.setText("⚠  " + self.error_text)
+        self.error_box.setVisible(bool(self.error_text))
+        empty = not msgs and not self.error_text
+        if empty:
+            model = self.model_combo.currentText() or "nessun modello installato"
+            self.hero_sub.setText(f"Modello: {html.escape(model)}")
+        self.stack.setCurrentIndex(0 if empty else 1)
+        self._update_title()
 
 
 def main():

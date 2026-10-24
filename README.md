@@ -12,8 +12,9 @@ Offre le stesse funzioni dell'app ufficiale per Windows e si integra bene con KD
 
 ### Funzionalità
 
-- **Chat in streaming** con rendering Markdown e blocchi di codice
-- **Cronologia delle conversazioni**: ricerca, rinomina, eliminazione, esportazione in Markdown
+- **Interfaccia moderna** che segue il tema di sistema (chiaro/scuro e colore d'accento di KDE)
+- **Chat in streaming** con rendering Markdown e blocchi di codice copiabili con un clic
+- **Cronologia delle conversazioni** raggruppata per data: ricerca, rinomina, eliminazione, esportazione in Markdown
 - **Gestione dei modelli**: elenco dei modelli installati (dimensione, parametri, quantizzazione),
   download (`pull`) con barra di avanzamento, eliminazione, scaricamento dalla memoria
 - **Allegati**:
@@ -86,7 +87,8 @@ e `~/.local/share/ollama-gui`.
 ### Uso
 
 Avvia `ollama-gui` dal terminale oppure dal menu delle applicazioni. Scegli un modello
-(o scaricane uno da **Server → Modelli…**) e inizia a scrivere.
+dal menu in alto a sinistra (o scaricane uno con **Modelli** nella barra laterale) e inizia a scrivere.
+Le altre azioni sono nel menu **⋮** in alto a destra.
 
 #### Scorciatoie da tastiera
 
@@ -97,6 +99,12 @@ Avvia `ollama-gui` dal terminale oppure dal menu delle applicazioni. Scegli un m
 | `Ctrl+N`         | Nuova chat                 |
 | `Ctrl+L`         | Sposta il cursore sul campo di testo |
 | `Ctrl+,`         | Impostazioni               |
+| `Ctrl+M`         | Modelli                    |
+| `Ctrl+B`         | Mostra/nascondi la barra laterale |
+| `Ctrl+R`         | Rigenera la risposta       |
+| `Ctrl+Shift+C`   | Copia l'ultima risposta    |
+| `Ctrl+E`         | Esporta la chat in Markdown |
+| `F2`             | Rinomina la chat           |
 | `Esc`            | Ferma la generazione       |
 | `Ctrl+Q`         | Esci                       |
 
@@ -168,8 +176,9 @@ It provides the same features as the official Windows app and integrates well wi
 
 ### Features
 
-- **Streaming chat** with Markdown rendering and code blocks
-- **Conversation history**: search, rename, delete, export to Markdown
+- **Modern interface** that follows the system theme (light/dark and KDE accent colour)
+- **Streaming chat** with Markdown rendering and one-click copyable code blocks
+- **Conversation history** grouped by date: search, rename, delete, export to Markdown
 - **Model management**: list installed models (size, parameters, quantization),
   download (`pull`) with a progress bar, delete, unload from memory
 - **Attachments**:
@@ -242,7 +251,8 @@ and `~/.local/share/ollama-gui` directories.
 ### Usage
 
 Launch `ollama-gui` from a terminal or from the application menu. Pick a model
-(or download one from **Server → Modelli…** (Models)) and start typing.
+from the menu at the top left (or download one with **Modelli** (Models) in the sidebar) and start typing.
+The other actions are in the **⋮** menu at the top right.
 
 #### Keyboard shortcuts
 
@@ -253,6 +263,12 @@ Launch `ollama-gui` from a terminal or from the application menu. Pick a model
 | `Ctrl+N`         | New chat                   |
 | `Ctrl+L`         | Focus the message input    |
 | `Ctrl+,`         | Settings                   |
+| `Ctrl+M`         | Models                     |
+| `Ctrl+B`         | Show/hide the sidebar      |
+| `Ctrl+R`         | Regenerate the answer      |
+| `Ctrl+Shift+C`   | Copy the last answer       |
+| `Ctrl+E`         | Export the chat to Markdown |
+| `F2`             | Rename the chat            |
 | `Esc`            | Stop generation            |
 | `Ctrl+Q`         | Quit                       |
 
