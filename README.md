@@ -17,6 +17,9 @@ Offre le stesse funzioni dell'app ufficiale per Windows e si integra bene con KD
 - **Cronologia delle conversazioni** raggruppata per data: ricerca, rinomina, eliminazione, esportazione in Markdown
 - **Gestione dei modelli**: elenco dei modelli installati (dimensione, parametri, quantizzazione),
   download (`pull`) con barra di avanzamento, eliminazione, scaricamento dalla memoria
+- **Libreria di Ollama integrata**: cerca i modelli di ollama.com (anche quelli della community),
+  filtra per funzione (strumenti, ragionamento, visione, …), guarda varianti, dimensioni e contesto
+  e scaricali con un doppio clic, senza aprire il browser
 - **Allegati**:
   - immagini (`.png`, `.jpg`, `.webp`, `.gif`, `.bmp`) per i modelli con visione,
     ridimensionate automaticamente a max 2048 px
@@ -181,6 +184,9 @@ It provides the same features as the official Windows app and integrates well wi
 - **Conversation history** grouped by date: search, rename, delete, export to Markdown
 - **Model management**: list installed models (size, parameters, quantization),
   download (`pull`) with a progress bar, delete, unload from memory
+- **Built-in Ollama library**: search the models on ollama.com (community ones included),
+  filter by capability (tools, thinking, vision, …), browse tags, sizes and context length
+  and download them with a double click, without opening the browser
 - **Attachments**:
   - images (`.png`, `.jpg`, `.webp`, `.gif`, `.bmp`) for vision models,
     automatically resized to at most 2048 px

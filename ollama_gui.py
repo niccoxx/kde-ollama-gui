@@ -8,6 +8,7 @@ dell'app ufficiale per Windows:
   * chat in streaming con rendering Markdown e blocchi di codice copiabili
   * cronologia delle conversazioni raggruppata per data (ricerca, rinomina, elimina, esporta)
   * scelta del modello, download (pull) con barra di avanzamento, eliminazione
+  * libreria di ollama.com integrata: ricerca, filtri, varianti (tag) e download con un clic
   * allegati: immagini (modelli con visione), file di testo/codice, PDF
     - trascinando i file nella finestra, con il pulsante o incollando un'immagine
   * modalita' "ragionamento" (thinking) per i modelli che la supportano
@@ -311,6 +312,94 @@ class Ollama:
         requests.post(self.base + "/api/generate", json={"model": name, "keep_alive": 0}, timeout=30).raise_for_status()
 
 
+class Library:
+    """Catalogo di ollama.com/library. Non esiste un'API pubblica: si leggono le pagine HTML."""
+
+    SITE = "https://ollama.com"
+    CAPS = ["", "tools", "thinking", "vision", "embedding", "audio"]
+    _TAG = re.compile(r"<[^>]+>")
+
+    @classmethod
+    def _text(cls, s: str) -> str:
+        return " ".join(html.unescape(cls._TAG.sub("", s)).split())
+
+    @classmethod
+    def _page(cls, path: str, params: dict | None = None, fragment: bool = False) -> str:
+        headers = {"User-Agent": f"{APP_NAME} (Linux)"}
+        if fragment:  # le pagine successive alla prima arrivano come frammento htmx
+            headers["HX-Request"] = "true"
+        try:
+            r = requests.get(cls.SITE + path, params=params, timeout=15, headers=headers)
+        except requests.RequestException:
+            raise RuntimeError("Impossibile raggiungere ollama.com: controlla la connessione a Internet.") from None
+        if r.status_code == 404:
+            raise RuntimeError("Modello non trovato su ollama.com.")
+        if not r.ok:
+            raise RuntimeError(f"ollama.com ha risposto con l'errore {r.status_code}.")
+        return r.text
+
+    @classmethod
+    def _badges(cls, blk: str, color: str) -> list[str]:
+        pat = r'<span[^>]*class="[^"]*%s[^"]*"[^>]*>(.*?)</span>' % re.escape(color)
+        return [cls._text(x) for x in re.findall(pat, blk, re.S)]
+
+    @classmethod
+    def search(cls, query: str = "", cap: str = "", newest: bool = False, page: int = 1) -> tuple[list[dict], bool]:
+        """Ritorna (modelli, ci_sono_altre_pagine). I modelli della community hanno nome «utente/modello»."""
+        params = {k: v for k, v in (("q", query), ("c", cap), ("o", "newest" if newest else ""), ("page", page if page > 1 else "")) if v}
+        text = cls._page("/search", params, fragment=page > 1)
+        out = []
+        for blk in re.split(r"<li\b", text)[1:]:
+            m = re.search(r'<a href="/([\w.-]+)/([\w.-]+)"', blk)
+            if not m or m.group(1) in ("search", "blog", "download", "settings"):
+                continue
+            community = m.group(1) != "library"
+            desc = re.search(r"<p\b[^>]*>(.*?)</p>", blk, re.S)
+            upd = re.search(r'title="Updated ([^"]+)"[^>]*>([^<]*)<', blk)
+            dl = re.search(r'title="([\d,.]+) downloads"', blk)
+            out.append({
+                "name": f"{m.group(1)}/{m.group(2)}" if community else m.group(2),
+                "community": community,
+                "description": cls._text(desc.group(1)) if desc else "",
+                "capabilities": cls._badges(blk, "indigo"),
+                "sizes": cls._badges(blk, "ddf4ff"),
+                "cloud": "cloud" in cls._badges(blk, "cyan"),
+                "downloads": int(re.sub(r"\D", "", dl.group(1))) if dl else 0,
+                "updated": cls._text(upd.group(2)) if upd else "",
+                "updated_full": upd.group(1) if upd else "",
+            })
+        return out, 'data-has-more="true"' in text or re.search(rf"[?&;]page={page + 1}\b", text) is not None
+
+    @classmethod
+    def tags(cls, name: str) -> list[dict]:
+        path = name if "/" in name else "library/" + name
+        prefix = name.split(":")[0].rsplit("/", 1)[0] + "/" if "/" in name else ""
+        text = cls._page(f"/{path}/tags")
+        out, seen = [], set()
+        pat = r'<a href="/(%s:[^"]+)" class="md:hidden[^"]*">(.*?)</a>' % re.escape(path)
+        for m in re.finditer(pat, text, re.S):
+            tag, info = prefix + m.group(1).rsplit("/", 1)[1], cls._text(m.group(2))
+            if tag in seen:
+                continue
+            seen.add(tag)
+            size = re.search(r"•\s*([\d.]+\s*[KMGT]?B)\b", info)
+            ctx = re.search(r"([\d.]+[KM]?)\s+context window", info)
+            inp = re.search(r"context window\s*•\s*(.+?)\s+input", info)
+            out.append({"name": tag, "size": size.group(1) if size else "",
+                        "context": ctx.group(1) if ctx else "", "input": inp.group(1) if inp else ""})
+        if not out:  # struttura della pagina cambiata: almeno i nomi dei tag
+            for tag in dict.fromkeys(re.findall(r'href="/(%s:[^"]+)"' % re.escape(path), text)):
+                out.append({"name": prefix + tag.rsplit("/", 1)[1], "size": "", "context": "", "input": ""})
+        return out
+
+
+def short_count(n: int) -> str:
+    for div, suf in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if n >= div:
+            return f"{n / div:.1f}".rstrip("0").rstrip(".") + suf
+    return str(n) if n else ""
+
+
 def friendly_error(e: Exception | str) -> str:
     s = str(e)
     if "Connection refused" in s or "Max retries" in s or "ConnectionError" in s or "Failed to establish" in s:
@@ -452,7 +541,7 @@ class ChatWorker(QThread):
 
 
 class PullWorker(QThread):
-    progress = Signal(str, int, int)
+    progress = Signal(str, "qint64", "qint64")
     done = Signal()
     failed = Signal(str)
 
@@ -1086,24 +1175,22 @@ class ModelsDialog(QDialog):
         super().__init__(win)
         self.win = win
         self.puller: PullWorker | None = None
+        self.installed: set[str] = set()
+        self.lib_page = 1
+        self.lib_seq = 0  # scarta le risposte arrivate dopo una ricerca piu' recente
+        self.tags_seq = 0
         self.setWindowTitle("Modelli")
-        self.resize(820, 520)
+        self.resize(940, 680)
         lay = QVBoxLayout(self)
         lay.setSpacing(10)
+        self.tabs = QTabWidget()
+        lay.addWidget(self.tabs, 1)
 
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Modello", "Dimensione", "Parametri", "Quantizzazione", "Modificato"])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setShowGrid(False)
-        self.table.setAlternatingRowColors(True)
-        self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(self.fontMetrics().height() + 14)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        lay.addWidget(self.table)
-
+        # --- scheda "Installati"
+        page = QWidget()
+        inst = QVBoxLayout(page)
+        self.table = self._make_table(["Modello", "Dimensione", "Parametri", "Quantizzazione", "Modificato"])
+        inst.addWidget(self.table)
         row = QHBoxLayout()
         self.btn_refresh = QPushButton(theme_icon("view-refresh"), "Aggiorna")
         self.btn_unload = QPushButton(theme_icon("media-eject", "go-down"), "Scarica dalla memoria")
@@ -1111,10 +1198,61 @@ class ModelsDialog(QDialog):
         for b in (self.btn_refresh, self.btn_unload, self.btn_delete):
             row.addWidget(b)
         row.addStretch(1)
-        lay.addLayout(row)
+        inst.addLayout(row)
+        self.tabs.addTab(page, theme_icon("drive-harddisk"), "Installati")
 
-        lay.addWidget(QLabel("<b>Scarica un nuovo modello</b> — nomi su <a href='https://ollama.com/library'>ollama.com/library</a>",
-                             openExternalLinks=True))
+        # --- scheda "Libreria" (ollama.com/library)
+        page = QWidget()
+        lib = QVBoxLayout(page)
+        row = QHBoxLayout()
+        self.lib_query = QLineEdit(placeholderText="Cerca nella libreria di Ollama, es. qwen, gemma, coder…", clearButtonEnabled=True)
+        self.lib_cap = QComboBox()
+        for c in Library.CAPS:
+            self.lib_cap.addItem({"": "Tutte le funzioni", "tools": "Strumenti (tools)", "thinking": "Ragionamento",
+                                  "vision": "Visione", "embedding": "Embedding", "audio": "Audio"}[c], c)
+        self.lib_order = QComboBox()
+        self.lib_order.addItems(["Più popolari", "Più recenti"])
+        self.btn_search = QPushButton(theme_icon("edit-find", "system-search"), "Cerca")
+        row.addWidget(self.lib_query, 1)
+        row.addWidget(self.lib_cap)
+        row.addWidget(self.lib_order)
+        row.addWidget(self.btn_search)
+        lib.addLayout(row)
+        self.lib_local_only = QCheckBox("Nascondi i modelli disponibili solo nel cloud", checked=True)
+        lib.addWidget(self.lib_local_only)
+
+        split = QSplitter(Qt.Orientation.Vertical)
+        top = QWidget()
+        tl = QVBoxLayout(top)
+        tl.setContentsMargins(0, 0, 0, 0)
+        self.lib_table = self._make_table(["Modello", "Descrizione", "Funzioni", "Dimensioni", "Download", "Aggiornato"])
+        self.lib_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.lib_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.lib_table.setWordWrap(False)
+        tl.addWidget(self.lib_table)
+        row = QHBoxLayout()
+        self.lib_status = QLabel("")
+        self.btn_more = QPushButton("Altri risultati")
+        self.btn_more.setVisible(False)
+        row.addWidget(self.lib_status, 1)
+        row.addWidget(self.btn_more)
+        tl.addLayout(row)
+        split.addWidget(top)
+
+        bottom = QWidget()
+        bl = QVBoxLayout(bottom)
+        bl.setContentsMargins(0, 0, 0, 0)
+        self.tags_title = QLabel("Seleziona un modello per vederne le varianti (tag).", wordWrap=True)
+        bl.addWidget(self.tags_title)
+        self.tags_table = self._make_table(["Tag", "Dimensione", "Contesto", "Input"])
+        bl.addWidget(self.tags_table)
+        split.addWidget(bottom)
+        split.setSizes([360, 220])
+        lib.addWidget(split, 1)
+        self.tabs.addTab(page, theme_icon("internet-services", "applications-internet", "globe"), "Libreria")
+
+        # --- download (comune alle due schede)
+        lay.addWidget(QLabel("<b>Scarica un modello</b> — sceglilo dalla scheda «Libreria» o scrivi il nome"))
         box = QHBoxLayout()
         self.name = QComboBox()
         self.name.setEditable(True)
@@ -1142,7 +1280,147 @@ class ModelsDialog(QDialog):
         self.btn_pull.clicked.connect(self.start_pull)
         self.btn_cancel.clicked.connect(self.cancel_pull)
         self.name.lineEdit().returnPressed.connect(self.start_pull)
+        self.btn_search.clicked.connect(self.lib_search)
+        self.lib_query.returnPressed.connect(self.lib_search)
+        self.lib_cap.currentIndexChanged.connect(self.lib_search)
+        self.lib_order.currentIndexChanged.connect(self.lib_search)
+        self.lib_local_only.toggled.connect(self.lib_search)
+        self.btn_more.clicked.connect(lambda: self.lib_search(more=True))
+        self.lib_table.itemSelectionChanged.connect(self.lib_load_tags)
+        self.lib_table.itemDoubleClicked.connect(lambda _it: self._pull_selected_model())
+        self.tags_table.itemSelectionChanged.connect(self._tag_selected)
+        self.tags_table.itemDoubleClicked.connect(lambda _it: self.start_pull())
+        self.tabs.currentChanged.connect(lambda i: i == 1 and self.lib_table.rowCount() == 0 and self.lib_search())
         self.refresh()
+
+    def _make_table(self, headers: list[str]) -> QTableWidget:
+        t = QTableWidget(0, len(headers))
+        t.setHorizontalHeaderLabels(headers)
+        t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        t.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        t.setShowGrid(False)
+        t.setAlternatingRowColors(True)
+        t.verticalHeader().setVisible(False)
+        t.verticalHeader().setDefaultSectionSize(self.fontMetrics().height() + 14)
+        t.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        t.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        return t
+
+    def _is_installed(self, tag: str) -> bool:
+        return tag in self.installed or (":" not in tag and tag + ":latest" in self.installed)
+
+    # --- libreria
+    def lib_search(self, *_a, more: bool = False):
+        self.lib_page = self.lib_page + 1 if more else 1
+        self.lib_seq += 1
+        seq, page = self.lib_seq, self.lib_page
+        if not more:
+            self.lib_table.setRowCount(0)
+            self.tags_table.setRowCount(0)
+            self.tags_title.setText("Seleziona un modello per vederne le varianti (tag).")
+        self.btn_more.setEnabled(False)
+        self.lib_status.setText("Ricerca su ollama.com…")
+        q, cap, newest = self.lib_query.text().strip(), self.lib_cap.currentData(), self.lib_order.currentIndex() == 1
+
+        def ok(res):
+            if seq == self.lib_seq:
+                self._lib_fill(*res)
+
+        def fail(msg):
+            if seq == self.lib_seq:
+                self.lib_status.setText(msg)
+                self.btn_more.setEnabled(True)
+
+        run_async(lambda: Library.search(q, cap, newest, page), ok, fail)
+
+    def _lib_fill(self, models: list[dict], has_more: bool):
+        hide_cloud = self.lib_local_only.isChecked()
+        for m in models:
+            if hide_cloud and m["cloud"] and not m["sizes"]:
+                continue
+            name = m["name"]
+            caps = list(m["capabilities"]) + (["cloud"] if m["cloud"] else [])
+            vals = [name, m["description"], ", ".join(caps), " ".join(m["sizes"]), short_count(m["downloads"]), m["updated"]]
+            r = self.lib_table.rowCount()
+            self.lib_table.insertRow(r)
+            for c, v in enumerate(vals):
+                it = QTableWidgetItem(v)
+                if c == 0:
+                    it.setData(Qt.ItemDataRole.UserRole, name)
+                    if any(i.split(":")[0] == name for i in self.installed):
+                        it.setText("✓ " + name)
+                        it.setToolTip("Installato (almeno una variante)")
+                        it.setForeground(QColor("#22c55e"))
+                    elif m["community"]:
+                        it.setToolTip("Modello caricato da un utente della community")
+                        it.setForeground(self.lib_table.palette().placeholderText().color())
+                elif c == 1:
+                    it.setToolTip(f"<p>{html.escape(v)}</p>")
+                elif c == 5 and m["updated_full"]:
+                    it.setToolTip("Aggiornato il " + m["updated_full"])
+                self.lib_table.setItem(r, c, it)
+        n = self.lib_table.rowCount()
+        self.lib_status.setText(f"{n} modelli" if n else "Nessun modello trovato.")
+        self.btn_more.setVisible(has_more)
+        self.btn_more.setEnabled(True)
+        # se una pagina e' fatta solo di modelli cloud nascosti, passa alla successiva
+        if has_more and n == 0 and models:
+            self.lib_search(more=True)
+
+    def _lib_selected(self) -> str | None:
+        r = self.lib_table.currentRow()
+        return self.lib_table.item(r, 0).data(Qt.ItemDataRole.UserRole) if r >= 0 else None
+
+    def lib_load_tags(self):
+        name = self._lib_selected()
+        if not name:
+            return
+        self.name.setCurrentText(name)
+        self.tags_seq += 1
+        seq = self.tags_seq
+        self.tags_table.setRowCount(0)
+        self.tags_title.setText(f"Varianti di <b>{html.escape(name)}</b>: caricamento…")
+
+        def ok(tags):
+            if seq == self.tags_seq:
+                self._tags_fill(name, tags)
+
+        def fail(msg):
+            if seq == self.tags_seq:
+                self.tags_title.setText(f"Varianti di <b>{html.escape(name)}</b>: {html.escape(msg)}")
+
+        run_async(lambda: Library.tags(name), ok, fail)
+
+    def _tags_fill(self, name: str, tags: list[dict]):
+        if self.lib_local_only.isChecked():
+            tags = [t for t in tags if not re.search(r"[:-]cloud$", t["name"])] or tags
+        for t in tags:
+            tag = t["name"]
+            r = self.tags_table.rowCount()
+            self.tags_table.insertRow(r)
+            for c, v in enumerate((tag, t["size"], t["context"], t["input"])):
+                it = QTableWidgetItem(v)
+                if c == 0:
+                    it.setData(Qt.ItemDataRole.UserRole, tag)
+                    if self._is_installed(tag):
+                        it.setText("✓ " + tag)
+                        it.setToolTip("Già installato")
+                        it.setForeground(QColor("#22c55e"))
+                    elif tag.endswith("cloud") or "-cloud" in tag:
+                        it.setToolTip("Eseguito sui server di Ollama: richiede l'accesso con «ollama signin»")
+                self.tags_table.setItem(r, c, it)
+        self.tags_title.setText(f"Varianti di <b>{html.escape(name)}</b> ({len(tags)}) — doppio clic per scaricare")
+
+    def _tag_selected(self):
+        r = self.tags_table.currentRow()
+        if r >= 0:
+            self.name.setCurrentText(self.tags_table.item(r, 0).data(Qt.ItemDataRole.UserRole))
+
+    def _pull_selected_model(self):
+        if self._lib_selected():
+            self.name.setCurrentText(self._lib_selected())
+            self.start_pull()
 
     def selected(self) -> str | None:
         r = self.table.currentRow()
@@ -1158,6 +1436,13 @@ class ModelsDialog(QDialog):
         run_async(self.win.api.tags, ok, lambda m: self.lbl.setText(m))
 
     def _fill(self, models, loaded):
+        self.installed = {m.get("name", "") for m in models}
+        for r in range(self.tags_table.rowCount()):
+            it = self.tags_table.item(r, 0)
+            tag = it.data(Qt.ItemDataRole.UserRole)
+            ok = self._is_installed(tag)
+            it.setText(("✓ " if ok else "") + tag)
+            it.setForeground(QColor("#22c55e") if ok else self.tags_table.palette().text().color())
         self.table.setRowCount(0)
         for m in sorted(models, key=lambda m: m.get("name", "")):
             d = m.get("details") or {}
@@ -1216,7 +1501,7 @@ class ModelsDialog(QDialog):
         self.lbl.setText(f"Download di {name}…")
         self.puller.start()
 
-    @Slot(str, int, int)
+    @Slot(str, "qint64", "qint64")
     def on_progress(self, status, done, total):
         if total > 0:
             self.bar.setRange(0, 100)
