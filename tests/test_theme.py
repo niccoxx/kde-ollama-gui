@@ -32,6 +32,15 @@ def test_accent_text_is_readable(app, reset_appearance, accent, fg):
     assert g.theme_colors()["accent_fg"] == fg
 
 
+def test_forced_theme_system_accent_text_is_readable(app, reset_appearance, monkeypatch):
+    """Regressione: accento di sistema chiaro (es. #a5cdff su macOS) con tema forzato → testo nero."""
+    monkeypatch.setattr(g, "_SYS_ACCENT", ["#a5cdff"])
+    g.apply_appearance(2, "")
+    wait()
+    c = g.theme_colors()
+    assert c["accent"] == "#a5cdff" and c["accent_fg"] == "#000000"
+
+
 def test_forced_theme_keeps_system_accent(app, reset_appearance):
     system = g._system_accent()
     g.apply_appearance(2, "#10b981")
