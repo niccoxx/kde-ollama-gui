@@ -651,13 +651,12 @@ def apply_appearance(theme: int, accent: str):
         hints.setColorScheme((Qt.ColorScheme.Unknown, Qt.ColorScheme.Light, Qt.ColorScheme.Dark)[theme])
     # una palette vuota torna a quella del sistema; si forzano solo i ruoli necessari
     pal = _scheme_palette(theme == 2) if theme in (1, 2) else QPalette()
-    if accent:
-        acc = QColor(accent)
+    # con un tema forzato si tiene comunque l'accento del sistema
+    acc = QColor(accent or (_system_accent() if theme in (1, 2) else ""))
+    if acc.isValid():
         pal.setColor(QPalette.ColorRole.Highlight, acc)
         light = 0.2126 * acc.redF() + 0.7152 * acc.greenF() + 0.0722 * acc.blueF() > 0.6
         pal.setColor(QPalette.ColorRole.HighlightedText, QColor("black" if light else "white"))
-    elif theme in (1, 2):  # tema forzato: si tiene comunque l'accento del sistema
-        pal.setColor(QPalette.ColorRole.Highlight, QColor(_system_accent()))
     app.setPalette(pal)
 
 

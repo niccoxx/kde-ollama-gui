@@ -2,6 +2,10 @@
 
 **[Italiano](#italiano)** · **[English](#english)**
 
+| Tema chiaro · Light theme | Tema scuro · Dark theme |
+|:---:|:---:|
+| ![Ollama GUI con il tema chiaro](docs/screenshot-light.png) | ![Ollama GUI con il tema scuro](docs/screenshot-dark.png) |
+
 ---
 
 ## Italiano
