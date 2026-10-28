@@ -2,13 +2,13 @@
 
 **[Italiano](#italiano)** · **[English](#english)**
 
-| Tema chiaro · Light theme | Tema scuro · Dark theme |
-|:---:|:---:|
-| ![Ollama GUI con il tema chiaro](docs/screenshot-light.png) | ![Ollama GUI con il tema scuro](docs/screenshot-dark.png) |
-
 ---
 
 ## Italiano
+
+| Tema chiaro | Tema scuro |
+|:---:|:---:|
+| ![Ollama GUI con il tema chiaro](docs/screenshot-it-light.png) | ![Ollama GUI con il tema scuro](docs/screenshot-it-dark.png) |
 
 Interfaccia grafica desktop per [Ollama](https://ollama.com) su Linux, scritta in Python con Qt (PySide6).
 Offre le stesse funzioni dell'app ufficiale per Windows e si integra bene con KDE Plasma
@@ -130,6 +130,8 @@ Dalla finestra **Impostazioni** (`Ctrl+,`) si possono impostare:
 - **Mostra il ragionamento** dei modelli
 - **Riduzione nella barra di sistema** alla chiusura della finestra
 - **Prompt di sistema**, inviato all'inizio di ogni conversazione
+- **Aspetto**: tema (sistema, chiaro, scuro), colore d'accento e lingua dell'interfaccia
+  (automatica, italiano, inglese; la lingua si applica al riavvio)
 
 Ogni opzione lasciata al valore predefinito usa le impostazioni del modello.
 
@@ -182,16 +184,21 @@ python -m pytest
 I test girano senza aprire finestre (`QT_QPA_PLATFORM=offscreen`), usano cartelle temporanee
 e non contattano il server Ollama.
 
+### Licenza
+
+Distribuito con licenza [MIT](LICENSE).
+
 ---
 
 ## English
 
+| Light theme | Dark theme |
+|:---:|:---:|
+| ![Ollama GUI with the light theme](docs/screenshot-en-light.png) | ![Ollama GUI with the dark theme](docs/screenshot-en-dark.png) |
+
 A desktop GUI for [Ollama](https://ollama.com) on Linux, written in Python with Qt (PySide6).
 It provides the same features as the official Windows app and integrates well with KDE Plasma
 (and any other desktop that supports Qt).
-
-> **Note:** the user interface is currently in Italian. Menu and dialog names below are given
-> in Italian, with the English translation in parentheses.
 
 ### Features
 
@@ -275,7 +282,7 @@ and `~/.local/share/ollama-gui` directories.
 ### Usage
 
 Launch `ollama-gui` from a terminal or from the application menu. Pick a model
-from the menu at the top left (or download one with **Modelli** (Models) in the sidebar) and start typing.
+from the menu at the top left (or download one with **Models** in the sidebar) and start typing.
 The other actions are in the **⋮** menu at the top right.
 
 #### Keyboard shortcuts
@@ -298,10 +305,10 @@ The other actions are in the **⋮** menu at the top right.
 
 ### Configuration
 
-The **Impostazioni** (Settings) dialog (`Ctrl+,`) lets you set:
+The **Settings** dialog (`Ctrl+,`) lets you set:
 
 - **Server address**: defaults to `127.0.0.1:11434`, or the value of the `OLLAMA_HOST`
-  environment variable. The *Verifica* (Test) button checks the connection.
+  environment variable. The *Test* button checks the connection.
   To use Ollama on another computer, enter for example `http://192.168.1.50:11434`.
 - **Context length** (`num_ctx`)
 - **Temperature**
@@ -309,6 +316,8 @@ The **Impostazioni** (Settings) dialog (`Ctrl+,`) lets you set:
 - **Show the reasoning** (thinking) of models
 - **Minimize to the system tray** when the window is closed
 - **System prompt**, sent at the start of every conversation
+- **Appearance**: theme (system, light, dark), accent colour and interface language
+  (automatic, Italian, English; the language is applied after a restart)
 
 Any option left at its default uses the model's own setting.
 
@@ -359,3 +368,7 @@ python -m pytest
 
 Tests run without opening windows (`QT_QPA_PLATFORM=offscreen`), use temporary folders
 and never contact the Ollama server.
+
+### License
+
+Released under the [MIT](LICENSE) license.
