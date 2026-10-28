@@ -6,6 +6,10 @@
 
 ## Italiano
 
+| Tema chiaro | Tema scuro |
+|:---:|:---:|
+| ![Ollama GUI con il tema chiaro](docs/screenshot-it-light.png) | ![Ollama GUI con il tema scuro](docs/screenshot-it-dark.png) |
+
 Interfaccia grafica desktop per [Ollama](https://ollama.com) su Linux, scritta in Python con Qt (PySide6).
 Offre le stesse funzioni dell'app ufficiale per Windows e si integra bene con KDE Plasma
 (e con qualsiasi altro desktop che supporti Qt).
@@ -17,6 +21,9 @@ Offre le stesse funzioni dell'app ufficiale per Windows e si integra bene con KD
 - **Cronologia delle conversazioni** raggruppata per data: ricerca, rinomina, eliminazione, esportazione in Markdown
 - **Gestione dei modelli**: elenco dei modelli installati (dimensione, parametri, quantizzazione),
   download (`pull`) con barra di avanzamento, eliminazione, scaricamento dalla memoria
+- **Libreria di Ollama integrata**: cerca i modelli di ollama.com (anche quelli della community),
+  filtra per funzione (strumenti, ragionamento, visione, …), guarda varianti, dimensioni e contesto
+  e scaricali con un doppio clic, senza aprire il browser
 - **Allegati**:
   - immagini (`.png`, `.jpg`, `.webp`, `.gif`, `.bmp`) per i modelli con visione,
     ridimensionate automaticamente a max 2048 px
@@ -28,6 +35,8 @@ Offre le stesse funzioni dell'app ufficiale per Windows e si integra bene con KD
 - **Avvio del server Ollama** dall'interfaccia se non è in esecuzione
   (tramite `systemctl` con `pkexec`, oppure `ollama serve`)
 - **Icona nella barra di sistema**, con opzione di riduzione a icona alla chiusura
+- **Aspetto e lingua**: tema chiaro/scuro o di sistema, colore d'accento, interfaccia in italiano o inglese
+  (automatica in base alla lingua del sistema)
 
 ### Requisiti
 
@@ -121,6 +130,8 @@ Dalla finestra **Impostazioni** (`Ctrl+,`) si possono impostare:
 - **Mostra il ragionamento** dei modelli
 - **Riduzione nella barra di sistema** alla chiusura della finestra
 - **Prompt di sistema**, inviato all'inizio di ogni conversazione
+- **Aspetto**: tema (sistema, chiaro, scuro), colore d'accento e lingua dell'interfaccia
+  (automatica, italiano, inglese; la lingua si applica al riavvio)
 
 Ogni opzione lasciata al valore predefinito usa le impostazioni del modello.
 
@@ -163,16 +174,31 @@ L'applicazione segue le specifiche XDG:
 Le conversazioni restano solo sul tuo computer; l'applicazione comunica esclusivamente con
 il server Ollama configurato.
 
+### Test
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+I test girano senza aprire finestre (`QT_QPA_PLATFORM=offscreen`), usano cartelle temporanee
+e non contattano il server Ollama.
+
+### Licenza
+
+Distribuito con licenza [MIT](LICENSE).
+
 ---
 
 ## English
 
+| Light theme | Dark theme |
+|:---:|:---:|
+| ![Ollama GUI with the light theme](docs/screenshot-en-light.png) | ![Ollama GUI with the dark theme](docs/screenshot-en-dark.png) |
+
 A desktop GUI for [Ollama](https://ollama.com) on Linux, written in Python with Qt (PySide6).
 It provides the same features as the official Windows app and integrates well with KDE Plasma
 (and any other desktop that supports Qt).
-
-> **Note:** the user interface is currently in Italian. Menu and dialog names below are given
-> in Italian, with the English translation in parentheses.
 
 ### Features
 
@@ -181,6 +207,9 @@ It provides the same features as the official Windows app and integrates well wi
 - **Conversation history** grouped by date: search, rename, delete, export to Markdown
 - **Model management**: list installed models (size, parameters, quantization),
   download (`pull`) with a progress bar, delete, unload from memory
+- **Built-in Ollama library**: search the models on ollama.com (community ones included),
+  filter by capability (tools, thinking, vision, …), browse tags, sizes and context length
+  and download them with a double click, without opening the browser
 - **Attachments**:
   - images (`.png`, `.jpg`, `.webp`, `.gif`, `.bmp`) for vision models,
     automatically resized to at most 2048 px
@@ -192,6 +221,8 @@ It provides the same features as the official Windows app and integrates well wi
 - **Start the Ollama server** from the GUI if it isn't running
   (via `systemctl` with `pkexec`, or `ollama serve`)
 - **System tray icon**, with an option to minimize to the tray on close
+- **Appearance and language**: light/dark or system theme, accent colour, Italian or English interface
+  (automatic, based on the system language)
 
 ### Requirements
 
@@ -251,7 +282,7 @@ and `~/.local/share/ollama-gui` directories.
 ### Usage
 
 Launch `ollama-gui` from a terminal or from the application menu. Pick a model
-from the menu at the top left (or download one with **Modelli** (Models) in the sidebar) and start typing.
+from the menu at the top left (or download one with **Models** in the sidebar) and start typing.
 The other actions are in the **⋮** menu at the top right.
 
 #### Keyboard shortcuts
@@ -274,10 +305,10 @@ The other actions are in the **⋮** menu at the top right.
 
 ### Configuration
 
-The **Impostazioni** (Settings) dialog (`Ctrl+,`) lets you set:
+The **Settings** dialog (`Ctrl+,`) lets you set:
 
 - **Server address**: defaults to `127.0.0.1:11434`, or the value of the `OLLAMA_HOST`
-  environment variable. The *Verifica* (Test) button checks the connection.
+  environment variable. The *Test* button checks the connection.
   To use Ollama on another computer, enter for example `http://192.168.1.50:11434`.
 - **Context length** (`num_ctx`)
 - **Temperature**
@@ -285,6 +316,8 @@ The **Impostazioni** (Settings) dialog (`Ctrl+,`) lets you set:
 - **Show the reasoning** (thinking) of models
 - **Minimize to the system tray** when the window is closed
 - **System prompt**, sent at the start of every conversation
+- **Appearance**: theme (system, light, dark), accent colour and interface language
+  (automatic, Italian, English; the language is applied after a restart)
 
 Any option left at its default uses the model's own setting.
 
@@ -325,3 +358,17 @@ The application follows the XDG specifications:
 | `~/.local/share/ollama-gui-app/`      | Program and virtual environment (if installed with `install.sh`) |
 
 Conversations stay on your computer; the application only talks to the configured Ollama server.
+
+### Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+Tests run without opening windows (`QT_QPA_PLATFORM=offscreen`), use temporary folders
+and never contact the Ollama server.
+
+### License
+
+Released under the [MIT](LICENSE) license.
