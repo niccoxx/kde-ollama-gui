@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Ollama GUI per Linux
-====================
-Interfaccia desktop (Qt / PySide6) per Ollama, con le stesse funzioni
+Pastura
+=======
+A native Qt desktop client for Ollama on Linux.
+
+Client desktop (Qt / PySide6) per Ollama, con le stesse funzioni
 dell'app ufficiale per Windows:
 
   * chat in streaming con rendering Markdown e blocchi di codice copiabili
@@ -118,17 +120,22 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtSvg import QSvgRenderer
 
 try:  # rendering Markdown piu' fedele; se manca si usa quello di Qt
     import markdown as _md
 except ImportError:  # pragma: no cover
     _md = None
 
-APP_NAME = "Ollama GUI"
+APP_NAME = "Pastura"
+APP_ID = "pastura"  # comando, file .desktop, icona e cartelle
 XDG_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 XDG_DATA = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-CONFIG_DIR = XDG_CONFIG / "ollama-gui"
-DATA_DIR = XDG_DATA / "ollama-gui"
+CONFIG_DIR = XDG_CONFIG / APP_ID
+DATA_DIR = XDG_DATA / APP_ID
+# cartelle del vecchio nome (kde-ollama-gui): spostate al primo avvio, vedi migrate_legacy_dirs()
+LEGACY_CONFIG_DIR = XDG_CONFIG / "ollama-gui"
+LEGACY_DATA_DIR = XDG_DATA / "ollama-gui"
 CHATS_DIR = DATA_DIR / "chats"
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
@@ -312,7 +319,6 @@ EN = {
     "Dammi cinque idee per un weekend fuori porta in autunno, con pro e contro.":
         "Give me five ideas for an autumn weekend getaway, with pros and cons.",
     # finestra principale
-    "Ollama": "Ollama",
     "Nascondi la barra laterale (Ctrl+B)": "Hide the sidebar (Ctrl+B)",
     "Mostra la barra laterale (Ctrl+B)": "Show the sidebar (Ctrl+B)",
     "Cerca nelle chat…": "Search chats…",
@@ -338,8 +344,10 @@ EN = {
     "Avvia server Ollama": "Start Ollama server",
     "Mostra/nascondi barra laterale": "Show/hide sidebar",
     "Informazioni": "About",
-    "<b>{}</b><br>Interfaccia desktop per Ollama su Linux.<br>Server: {}":
-        "<b>{}</b><br>Desktop interface for Ollama on Linux.<br>Server: {}",
+    "<b>{}</b><br>Un client desktop Qt nativo per Ollama su Linux.<br>Server: {}<br><br>"
+    "<small>Pastura è un progetto indipendente e non è affiliato a Ollama.</small>":
+        "<b>{}</b><br>A native Qt desktop client for Ollama on Linux.<br>Server: {}<br><br>"
+        "<small>Pastura is an independent project and is not affiliated with Ollama.</small>",
     "Connesso a {}": "Connected to {}",
     "Non connesso": "Not connected",
     "Ollama non raggiungibile su {}": "Ollama not reachable at {}",
@@ -443,22 +451,51 @@ def esc_br(text: str) -> str:
     return html.escape(text).replace("\n", "<br>")
 
 
-def make_icon() -> QIcon:
-    pm = QPixmap(128, 128)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor("#111827"))
-    p.drawRoundedRect(8, 8, 112, 112, 28, 28)
-    p.setPen(QColor("white"))
-    f = QFont()
-    f.setBold(True)
-    f.setPixelSize(74)
-    p.setFont(f)
-    p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "O")
-    p.end()
-    return QIcon.fromTheme("ollama", QIcon(pm))
+# icona dell'app: fili d'erba in un cerchio; {bg} e {fg} seguono il colore d'accento del tema.
+# pastura.svg (installato da install.sh) e' la stessa icona con i colori predefiniti.
+ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<circle cx="32" cy="32" r="30" fill="{bg}"/>
+<g fill="{fg}">
+<path d="M29.5 49 C29 40 25 31.5 16.5 24 C26.5 27.5 32.5 37 33.5 49 Z"/>
+<path d="M30.5 49 C31 36 34 23.5 41 12.5 C41 26 38.5 38 36.5 49 Z"/>
+<path d="M36.5 49 C38.5 41.5 42.5 36 49.5 32.5 C45.5 38 42 43.5 40.5 49 Z"/>
+<rect x="18" y="47.6" width="28" height="3.6" rx="1.8"/>
+</g>
+</svg>
+"""
+ICON_COLORS = ("#16a34a", "#ffffff")  # colori di pastura.svg
+
+
+def icon_svg(bg: str = ICON_COLORS[0], fg: str = ICON_COLORS[1]) -> str:
+    return ICON_SVG.format(bg=bg, fg=fg)
+
+
+def make_icon(bg: str = ICON_COLORS[0], fg: str = ICON_COLORS[1]) -> QIcon:
+    renderer = QSvgRenderer(QByteArray(icon_svg(bg, fg).encode()))
+    icon = QIcon()
+    for side in (16, 22, 24, 32, 48, 64, 128, 256):
+        img = QImage(side, side, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        renderer.render(p, QRectF(0, 0, side, side))
+        p.end()
+        icon.addPixmap(QPixmap.fromImage(img))
+    return icon
+
+
+def migrate_legacy_dirs() -> list[Path]:
+    """Sposta impostazioni e chat dalle cartelle del vecchio nome, se le nuove non esistono ancora."""
+    moved = []
+    for old, new in ((LEGACY_CONFIG_DIR, CONFIG_DIR), (LEGACY_DATA_DIR, DATA_DIR)):
+        if old.is_dir() and not new.exists():
+            try:
+                new.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(old), str(new))
+                moved.append(new)
+            except OSError:
+                pass  # si riparte con impostazioni vuote: le vecchie restano dove sono
+    return moved
 
 
 def pdf_text(path: str) -> str:
@@ -2103,7 +2140,6 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.setWindowIcon(make_icon())
         self.resize(1180, 780)
         self.setAcceptDrops(True)
 
@@ -2133,6 +2169,7 @@ class MainWindow(QMainWindow):
         apply_appearance(int(self.settings["theme"]), self.settings["accent"])
         self.c = theme_colors()
         self.doc_css = doc_css(self.c)
+        self.setWindowIcon(make_icon(self.c["accent"], self.c["accent_fg"]))
         self._build_ui()
         self._build_actions()
         self._build_tray()
@@ -2189,10 +2226,9 @@ class MainWindow(QMainWindow):
         sl.setContentsMargins(12, 14, 12, 12)
         sl.setSpacing(10)
         brand = QHBoxLayout()
-        logo = QLabel()
-        logo.setPixmap(self.windowIcon().pixmap(26, 26))
-        brand.addWidget(logo)
-        brand.addWidget(QLabel(tr("Ollama"), objectName="brand"))
+        self.side_logo = QLabel()
+        brand.addWidget(self.side_logo)
+        brand.addWidget(QLabel(APP_NAME, objectName="brand"))
         brand.addStretch(1)
         brand.addWidget(self._icon_button(("sidebar-collapse-left", "view-left-close", "go-previous"), "«",
                                           tr("Nascondi la barra laterale (Ctrl+B)"), self.toggle_sidebar))
@@ -2309,9 +2345,8 @@ class MainWindow(QMainWindow):
         hv = QVBoxLayout(hero)
         hv.setContentsMargins(20, 20, 20, 20)
         hv.addStretch(2)
-        logo = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
-        logo.setPixmap(self.windowIcon().pixmap(60, 60))
-        hv.addWidget(logo)
+        self.hero_logo = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
+        hv.addWidget(self.hero_logo)
         hv.addSpacing(10)
         hv.addWidget(QLabel(tr("Come posso aiutarti?"), objectName="heroTitle", alignment=Qt.AlignmentFlag.AlignCenter))
         self.hero_sub = QLabel(objectName="heroSub", alignment=Qt.AlignmentFlag.AlignCenter)
@@ -2447,12 +2482,23 @@ class MainWindow(QMainWindow):
     # ---- tema
     def _apply_theme(self):
         self.setStyleSheet(build_qss(self.c))
+        self._apply_icon()
         shadow = QGraphicsDropShadowEffect(self.composer)
         shadow.setBlurRadius(28)
         shadow.setOffset(0, 4)
         shadow.setColor(QColor(0, 0, 0, 110 if self.c["dark"] else 28))
         self.composer.setGraphicsEffect(shadow)
         self._update_send()
+
+    def _apply_icon(self):
+        """L'icona segue il colore d'accento: finestra, barra laterale, schermata iniziale e vassoio."""
+        icon = make_icon(self.c["accent"], self.c["accent_fg"])
+        self.setWindowIcon(icon)
+        QApplication.setWindowIcon(icon)
+        self.side_logo.setPixmap(icon.pixmap(26, 26))
+        self.hero_logo.setPixmap(icon.pixmap(60, 60))
+        if self.tray:
+            self.tray.setIcon(icon)
 
     def changeEvent(self, e):
         if e.type() in (QEvent.Type.ApplicationPaletteChange, QEvent.Type.PaletteChange) and hasattr(self, "stack"):
@@ -2509,7 +2555,9 @@ class MainWindow(QMainWindow):
         QApplication.quit()
 
     def about(self):
-        QMessageBox.about(self, APP_NAME, tr("<b>{}</b><br>Interfaccia desktop per Ollama su Linux.<br>Server: {}").format(APP_NAME, self.api.base))
+        QMessageBox.about(self, APP_NAME, tr("<b>{}</b><br>Un client desktop Qt nativo per Ollama su Linux.<br>Server: {}<br><br>"
+                             "<small>Pastura è un progetto indipendente e non è affiliato a Ollama.</small>")
+                          .format(APP_NAME, self.api.base))
 
     def toggle_sidebar(self):
         visible = not self.sidebar.isHidden()
@@ -3124,9 +3172,10 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("ollama-gui")
+    app.setApplicationName(APP_ID)
     app.setApplicationDisplayName(APP_NAME)
-    app.setDesktopFileName("ollama-gui")
+    app.setDesktopFileName(APP_ID)
+    migrate_legacy_dirs()
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

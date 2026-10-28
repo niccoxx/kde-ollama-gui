@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-import ollama_gui as g
+import pastura as g
 
 SOURCE = Path(g.__file__).read_text("utf-8")
 
