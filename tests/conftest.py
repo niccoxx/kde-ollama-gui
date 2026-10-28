@@ -24,7 +24,13 @@ def isolated_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(g, "CONFIG_DIR", tmp_path / "config")
     monkeypatch.setattr(g, "CHATS_DIR", tmp_path / "chats")
     monkeypatch.delenv("OLLAMA_HOST", raising=False)
-    return tmp_path
+    # lingua fissa: i test non dipendono da quella della macchina
+    for var in ("LANGUAGE", "LC_ALL", "LC_MESSAGES"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("LANG", "it_IT.UTF-8")
+    g.set_language("it")
+    yield tmp_path
+    g.set_language("it")
 
 
 @pytest.fixture
