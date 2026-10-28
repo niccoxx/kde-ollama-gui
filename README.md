@@ -166,6 +166,16 @@ L'applicazione segue le specifiche XDG:
 Le conversazioni restano solo sul tuo computer; l'applicazione comunica esclusivamente con
 il server Ollama configurato.
 
+### Test
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+I test girano senza aprire finestre (`QT_QPA_PLATFORM=offscreen`), usano cartelle temporanee
+e non contattano il server Ollama.
+
 ---
 
 ## English
@@ -331,3 +341,13 @@ The application follows the XDG specifications:
 | `~/.local/share/ollama-gui-app/`      | Program and virtual environment (if installed with `install.sh`) |
 
 Conversations stay on your computer; the application only talks to the configured Ollama server.
+
+### Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+Tests run without opening windows (`QT_QPA_PLATFORM=offscreen`), use temporary folders
+and never contact the Ollama server.
