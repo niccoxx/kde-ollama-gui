@@ -96,8 +96,11 @@ crea chat dimostrative, chiama `_srv_ok("0.12.6")` per lo stato "connesso" e sal
 - `main` riceve le modifiche **solo tramite pull request** da branch di lavoro dedicati;
   dopo il merge i branch di lavoro si possono cancellare.
 - **`develop` è il branch di sviluppo personale: non va cancellato.** Al 28/10/2026 contiene
-  `ff81189 fix install` (`install -m 644` al posto di `cp` in `install.sh`), non ancora su `main`.
+  `15337d6 fix install` (`install -m 644` al posto di `cp` in `install.sh`), non ancora su `main`.
 - **Chiedere sempre conferma prima di ogni commit e push.**
+- Identità dei commit: `niccoxx <45878511+niccoxx@users.noreply.github.com>`, impostata nella config
+  del repository (`git config user.name/user.email`). Sul Mac non c'è una config globale: senza quella
+  locale git userebbe il nome dell'account e della macchina. Verificarla prima di committare.
 - Il comando `gh` non è installato: le PR si aprono dal link `…/pull/new/<branch>` stampato dal push.
 - Tag delle versioni nel formato `v1.0.0` (senza punto dopo la `v`), con Release su GitHub.
 - `.gitignore`: `.venv`, `__pycache__/`, `.pytest_cache/`.
@@ -105,16 +108,16 @@ crea chat dimostrative, chiama `_srv_ok("0.12.6")` per lo stato "connesso" e sal
 ## Storia dello sviluppo
 
 ### 24/10/2026 — prime versioni
-- `626e5c8` primo commit: chat in streaming, cronologia, gestione modelli, allegati, impostazioni,
+- `7e7b647` primo commit: chat in streaming, cronologia, gestione modelli, allegati, impostazioni,
   icona nella barra di sistema, `install.sh`, README bilingue.
-- `2e32f6b` nuova versione su `develop`, unita con la **PR #1**.
+- `8bee4fb` nuova versione su `develop`, unita con la **PR #1**.
 
 ### 27/10/2026 — libreria dei modelli
-- `6f9224c` elenco e ricerca dei modelli di ollama.com nella finestra Modelli. Con questo commit
+- `5d384d9` elenco e ricerca dei modelli di ollama.com nella finestra Modelli. Con questo commit
   era finito nel repository anche `__pycache__/ollama_gui.cpython-314.pyc` (poi rimosso).
 
 ### 28/10/2026 — interfaccia moderna, temi, test, inglese e v1.0.0
-1. **UI più moderna** (`5a1b0b3`, PR #2): blocchi di codice con font monospaziato vero
+1. **UI più moderna** (`49d12bd`, PR #2): blocchi di codice con font monospaziato vero
    (prima usavano un font proporzionale perché "Monospace" non esisteva) e intestazione colorata;
    schede dei suggerimenti (`SuggestionCard`) con titolo in grassetto e descrizione attenuata;
    ombra sul composer; titolo iniziale più grande.
@@ -122,22 +125,28 @@ crea chat dimostrative, chiama `_srv_ok("0.12.6")` per lo stato "connesso" e sal
    d'accento (sistema, 7 preset, personalizzato), con anteprima immediata e ripristino su *Annulla*.
    Corretto un bug già presente: la finestra non si aggiornava al cambio di tema del sistema
    (gestiva solo `ApplicationPaletteChange`, mentre riceve `PaletteChange`).
-3. **Test** (`0d42e7e`, PR #3): suite pytest offscreen; verificato che il test di regressione sul
+3. **Test** (`e023c6e`, PR #3): suite pytest offscreen; verificato che il test di regressione sul
    tema fallisca reintroducendo il bug. Aggiunti `requirements-dev.txt` e la sezione Test nel README.
-4. **`.gitignore`** (`3554091`, PR #3) e **rimozione di `__pycache__`** dal repository (`1583b33`, PR #5).
-5. **Screenshot nel README** (`12ab90c`, PR #6). Generandoli è emerso un bug: con tema forzato e
+4. **`.gitignore`** (`a512ce4`, PR #3) e **rimozione di `__pycache__`** dal repository (`6cd1064`, PR #5).
+5. **Screenshot nel README** (`067b6ca`, PR #6). Generandoli è emerso un bug: con tema forzato e
    accento di sistema il testo sui pulsanti era sempre bianco, illeggibile sull'azzurro chiaro di
    macOS; ora si calcola dalla luminosità (con test).
-6. **Interfaccia in inglese** (`8d300ab`, PR #7): circa 200 testi passati da `tr()`, dizionario `EN`,
+6. **Interfaccia in inglese** (`33893e5`, PR #7): circa 200 testi passati da `tr()`, dizionario `EN`,
    impostazione *Lingua*, rilevamento della lingua di sistema (con la correzione per macOS),
    `tests/test_i18n.py`.
-7. **Preparazione al rilascio** (`27ffc09`, PR #8): licenza MIT; tolta dal README inglese la nota
+7. **Preparazione al rilascio** (`ef73628`, PR #8): licenza MIT; tolta dal README inglese la nota
    "the user interface is currently in Italian"; nomi inglesi dei menu nella parte inglese;
    screenshot inglesi nella sezione English e italiani (rinominati `screenshot-it-*`) in quella
    italiana; impostazioni di aspetto e lingua nella documentazione.
 8. **Rilascio `v1.0.0`**: la Release "Python Ollama GUI" è stata spostata dal tag `v.1.0.0` al tag
    `v1.0.0` (sul merge della PR #8, quindi con la licenza); il vecchio tag è stato cancellato.
    Cancellati anche i branch di lavoro già uniti; restano `main` e `develop`.
+9. **`CLAUDE.md`** su `develop` e merge di `main` in `develop`.
+10. **Riscrittura dell'identità dei commit**: alcuni commit erano usciti con il nome dell'account e
+    della macchina locale invece di `niccoxx`. Tutta la storia di `main` e `develop` è stata riscritta
+    (autore e committer `niccoxx` con email noreply di GitHub) con force-push e spostamento del tag
+    `v1.0.0`; gli hash citati qui sono quelli nuovi. Le PR #2–#8 su GitHub mostrano ancora i commit
+    vecchi (servono il supporto di GitHub per rimuoverli).
 
 ## Idee non ancora fatte
 - Evidenziazione della sintassi nei blocchi di codice (es. con Pygments).
