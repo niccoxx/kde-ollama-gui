@@ -2,7 +2,7 @@
 import pytest
 from PySide6.QtGui import QColor, QFontDatabase
 
-import ollama_gui as g
+import pastura as g
 from conftest import wait
 
 

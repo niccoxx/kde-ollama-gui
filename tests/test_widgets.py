@@ -2,7 +2,7 @@
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 
-import ollama_gui as g
+import pastura as g
 from conftest import wait
 
 

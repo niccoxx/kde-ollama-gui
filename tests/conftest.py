@@ -10,7 +10,7 @@ import pytest
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-import ollama_gui as g
+import pastura as g
 
 
 @pytest.fixture(scope="session")

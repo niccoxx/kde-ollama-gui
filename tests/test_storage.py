@@ -1,7 +1,7 @@
 """Impostazioni e archivio delle chat (su cartelle temporanee, vedi conftest)."""
 import json
 
-import ollama_gui as g
+import pastura as g
 
 
 def test_settings_defaults_include_theme():

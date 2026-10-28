@@ -1,6 +1,13 @@
-# kde-ollama-gui
+<p align="center"><img src="pastura.svg" width="96" alt="Pastura"></p>
 
-**[Italiano](#italiano)** · **[English](#english)**
+<h1 align="center">Pastura</h1>
+
+<p align="center">
+<b>A native Qt desktop client for Ollama on Linux</b><br>
+<i>Un client desktop Qt nativo per Ollama su Linux</i>
+</p>
+
+<p align="center"><b><a href="#italiano">Italiano</a></b> · <b><a href="#english">English</a></b></p>
 
 ---
 
@@ -8,11 +15,13 @@
 
 | Tema chiaro | Tema scuro |
 |:---:|:---:|
-| ![Ollama GUI con il tema chiaro](docs/screenshot-it-light.png) | ![Ollama GUI con il tema scuro](docs/screenshot-it-dark.png) |
+| ![Pastura con il tema chiaro](docs/screenshot-it-light.png) | ![Pastura con il tema scuro](docs/screenshot-it-dark.png) |
 
-Interfaccia grafica desktop per [Ollama](https://ollama.com) su Linux, scritta in Python con Qt (PySide6).
+**Pastura** è un client desktop per [Ollama](https://ollama.com) su Linux, scritto in Python con Qt (PySide6).
 Offre le stesse funzioni dell'app ufficiale per Windows e si integra bene con KDE Plasma
 (e con qualsiasi altro desktop che supporti Qt).
+
+> Pastura è un progetto indipendente e non è affiliato a Ollama.
 
 ### Funzionalità
 
@@ -64,10 +73,16 @@ Lo script [install.sh](install.sh) installa l'applicazione nella home dell'utent
 
 Lo script:
 
-1. copia i file in `~/.local/share/ollama-gui-app/`
+1. copia i file in `~/.local/share/pastura-app/`
 2. crea un ambiente virtuale Python e vi installa le dipendenze
-3. crea il comando `~/.local/bin/ollama-gui`
-4. aggiunge la voce **Ollama GUI** al menu delle applicazioni
+3. crea il comando `~/.local/bin/pastura`
+4. aggiunge la voce **Pastura** al menu delle applicazioni e installa l'icona in
+   `~/.local/share/icons/hicolor/scalable/apps/pastura.svg`
+5. rimuove la vecchia installazione col nome *Ollama GUI*, se presente
+
+**Aggiornamento da kde-ollama-gui:** al primo avvio Pastura sposta impostazioni e cronologia
+da `~/.config/ollama-gui` e `~/.local/share/ollama-gui` nelle nuove cartelle (solo se queste
+non esistono ancora), quindi non perdi nulla.
 
 Se `~/.local/bin` non è nel `PATH`, aggiungilo (per esempio in `~/.bashrc`):
 
@@ -80,22 +95,23 @@ export PATH="$HOME/.local/bin:$PATH"
 ```bash
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
-./venv/bin/python ollama_gui.py
+./venv/bin/python pastura.py
 ```
 
 #### Disinstallazione
 
 ```bash
-rm -rf ~/.local/share/ollama-gui-app
-rm -f ~/.local/bin/ollama-gui ~/.local/share/applications/ollama-gui.desktop
+rm -rf ~/.local/share/pastura-app
+rm -f ~/.local/bin/pastura ~/.local/share/applications/pastura.desktop
+rm -f ~/.local/share/icons/hicolor/scalable/apps/pastura.svg
 ```
 
-Per eliminare anche impostazioni e cronologia, rimuovi le cartelle `~/.config/ollama-gui`
-e `~/.local/share/ollama-gui`.
+Per eliminare anche impostazioni e cronologia, rimuovi le cartelle `~/.config/pastura`
+e `~/.local/share/pastura`.
 
 ### Uso
 
-Avvia `ollama-gui` dal terminale oppure dal menu delle applicazioni. Scegli un modello
+Avvia `pastura` dal terminale oppure dal menu delle applicazioni. Scegli un modello
 dal menu in alto a sinistra (o scaricane uno con **Modelli** nella barra laterale) e inizia a scrivere.
 Le altre azioni sono nel menu **⋮** in alto a destra.
 
@@ -165,11 +181,15 @@ sudo systemctl restart ollama
 
 L'applicazione segue le specifiche XDG:
 
-| Percorso                              | Contenuto                                  |
-|---------------------------------------|--------------------------------------------|
-| `~/.config/ollama-gui/settings.json`  | Impostazioni                               |
-| `~/.local/share/ollama-gui/chats/`    | Conversazioni salvate (un file JSON ciascuna) |
-| `~/.local/share/ollama-gui-app/`      | Programma e ambiente virtuale (se installato con `install.sh`) |
+| Percorso                                              | Contenuto                                  |
+|-------------------------------------------------------|--------------------------------------------|
+| `~/.config/pastura/settings.json`                     | Impostazioni                               |
+| `~/.local/share/pastura/chats/`                       | Conversazioni salvate (un file JSON ciascuna) |
+| `~/.local/share/pastura-app/`                         | Programma e ambiente virtuale (se installato con `install.sh`) |
+| `~/.local/share/icons/hicolor/scalable/apps/pastura.svg` | Icona dell'applicazione (se installato con `install.sh`) |
+
+Chi aggiorna da kde-ollama-gui trova impostazioni e chat spostate automaticamente da
+`~/.config/ollama-gui` e `~/.local/share/ollama-gui` al primo avvio.
 
 Le conversazioni restano solo sul tuo computer; l'applicazione comunica esclusivamente con
 il server Ollama configurato.
@@ -194,11 +214,13 @@ Distribuito con licenza [MIT](LICENSE).
 
 | Light theme | Dark theme |
 |:---:|:---:|
-| ![Ollama GUI with the light theme](docs/screenshot-en-light.png) | ![Ollama GUI with the dark theme](docs/screenshot-en-dark.png) |
+| ![Pastura with the light theme](docs/screenshot-en-light.png) | ![Pastura with the dark theme](docs/screenshot-en-dark.png) |
 
-A desktop GUI for [Ollama](https://ollama.com) on Linux, written in Python with Qt (PySide6).
+**Pastura** is a native desktop client for [Ollama](https://ollama.com) on Linux, written in Python with Qt (PySide6).
 It provides the same features as the official Windows app and integrates well with KDE Plasma
 (and any other desktop that supports Qt).
+
+> Pastura is an independent project and is not affiliated with Ollama.
 
 ### Features
 
@@ -250,10 +272,16 @@ The [install.sh](install.sh) script installs the application in your home direct
 
 The script:
 
-1. copies the files to `~/.local/share/ollama-gui-app/`
+1. copies the files to `~/.local/share/pastura-app/`
 2. creates a Python virtual environment and installs the dependencies into it
-3. creates the `~/.local/bin/ollama-gui` command
-4. adds an **Ollama GUI** entry to the application menu
+3. creates the `~/.local/bin/pastura` command
+4. adds a **Pastura** entry to the application menu and installs the icon in
+   `~/.local/share/icons/hicolor/scalable/apps/pastura.svg`
+5. removes the old installation under the *Ollama GUI* name, if present
+
+**Upgrading from kde-ollama-gui:** on first launch Pastura moves your settings and chat history
+from `~/.config/ollama-gui` and `~/.local/share/ollama-gui` to the new folders (only if those
+don't exist yet), so nothing is lost.
 
 If `~/.local/bin` is not in your `PATH`, add it (for example in `~/.bashrc`):
 
@@ -266,22 +294,23 @@ export PATH="$HOME/.local/bin:$PATH"
 ```bash
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
-./venv/bin/python ollama_gui.py
+./venv/bin/python pastura.py
 ```
 
 #### Uninstalling
 
 ```bash
-rm -rf ~/.local/share/ollama-gui-app
-rm -f ~/.local/bin/ollama-gui ~/.local/share/applications/ollama-gui.desktop
+rm -rf ~/.local/share/pastura-app
+rm -f ~/.local/bin/pastura ~/.local/share/applications/pastura.desktop
+rm -f ~/.local/share/icons/hicolor/scalable/apps/pastura.svg
 ```
 
-To also delete settings and chat history, remove the `~/.config/ollama-gui`
-and `~/.local/share/ollama-gui` directories.
+To also delete settings and chat history, remove the `~/.config/pastura`
+and `~/.local/share/pastura` directories.
 
 ### Usage
 
-Launch `ollama-gui` from a terminal or from the application menu. Pick a model
+Launch `pastura` from a terminal or from the application menu. Pick a model
 from the menu at the top left (or download one with **Models** in the sidebar) and start typing.
 The other actions are in the **⋮** menu at the top right.
 
@@ -351,11 +380,15 @@ sudo systemctl restart ollama
 
 The application follows the XDG specifications:
 
-| Path                                  | Contents                                   |
-|---------------------------------------|--------------------------------------------|
-| `~/.config/ollama-gui/settings.json`  | Settings                                   |
-| `~/.local/share/ollama-gui/chats/`    | Saved conversations (one JSON file each)   |
-| `~/.local/share/ollama-gui-app/`      | Program and virtual environment (if installed with `install.sh`) |
+| Path                                                  | Contents                                   |
+|-------------------------------------------------------|--------------------------------------------|
+| `~/.config/pastura/settings.json`                     | Settings                                   |
+| `~/.local/share/pastura/chats/`                       | Saved conversations (one JSON file each)   |
+| `~/.local/share/pastura-app/`                         | Program and virtual environment (if installed with `install.sh`) |
+| `~/.local/share/icons/hicolor/scalable/apps/pastura.svg` | Application icon (if installed with `install.sh`) |
+
+If you upgrade from kde-ollama-gui, settings and chats are moved automatically from
+`~/.config/ollama-gui` and `~/.local/share/ollama-gui` on first launch.
 
 Conversations stay on your computer; the application only talks to the configured Ollama server.
 

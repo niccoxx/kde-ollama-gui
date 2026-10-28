@@ -1,7 +1,7 @@
 """Funzioni di utilita' senza interfaccia."""
 import pytest
 
-import ollama_gui as g
+import pastura as g
 
 
 @pytest.mark.parametrize("given, expected", [
