@@ -59,6 +59,7 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QFont,
+    QFontDatabase,
     QFontMetrics,
     QGuiApplication,
     QIcon,
@@ -67,6 +68,7 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPalette,
     QPixmap,
     QShortcut,
     QTextDocument,
@@ -74,7 +76,9 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QButtonGroup,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -82,6 +86,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -223,6 +228,8 @@ class Settings(dict):
         "geometry": "",
         "splitter": [260, 900],
         "sidebar": True,
+        "theme": 0,  # 0 sistema, 1 chiaro, 2 scuro
+        "accent": "",  # vuoto = colore d'accento del sistema
     }
 
     def __init__(self):
@@ -595,6 +602,65 @@ def _mix(a: QColor, b: QColor, t: float) -> str:
     ).name()
 
 
+ACCENTS = [
+    ("Blu", "#3b82f6"), ("Viola", "#8b5cf6"), ("Verde", "#10b981"), ("Arancione", "#f97316"),
+    ("Rosa", "#ec4899"), ("Rosso", "#ef4444"), ("Grafite", "#64748b"),
+]
+
+# palette usate quando il tema chiaro/scuro e' forzato (toni simili a Breeze)
+_SCHEMES = {
+    False: dict(window="#eff0f1", base="#ffffff", alt="#f7f7f7", text="#232629", button="#fcfcfc",
+                mid="#bdc3c7", disabled="#a0a4a8", highlight="#3daee9"),
+    True: dict(window="#202326", base="#1b1e20", alt="#232629", text="#fcfcfc", button="#292c30",
+               mid="#4d5257", disabled="#6e7378", highlight="#3daee9"),
+}
+
+
+def _scheme_palette(dark: bool) -> QPalette:
+    k = _SCHEMES[dark]
+    R = QPalette.ColorRole
+    p = QPalette()
+    for role, key in ((R.Window, "window"), (R.Base, "base"), (R.AlternateBase, "alt"), (R.Button, "button"),
+                      (R.ToolTipBase, "base"), (R.Mid, "mid"), (R.Highlight, "highlight")):
+        p.setColor(role, QColor(k[key]))
+    for role in (R.WindowText, R.Text, R.ButtonText, R.ToolTipText, R.BrightText):
+        p.setColor(role, QColor(k["text"]))
+    p.setColor(R.PlaceholderText, QColor(k["disabled"]))
+    p.setColor(R.HighlightedText, QColor("white"))
+    for role in (R.WindowText, R.Text, R.ButtonText):
+        p.setColor(QPalette.ColorGroup.Disabled, role, QColor(k["disabled"]))
+    return p
+
+
+_SYS_ACCENT: list[str] = []
+
+
+def _system_accent() -> str:
+    """Colore d'accento del sistema, letto prima che l'app imposti una palette propria."""
+    if not _SYS_ACCENT:
+        _SYS_ACCENT.append(QGuiApplication.palette().highlight().color().name())
+    return _SYS_ACCENT[0]
+
+
+def apply_appearance(theme: int, accent: str):
+    """Applica tema (0 sistema, 1 chiaro, 2 scuro) e colore d'accento (vuoto = di sistema) a tutta l'app."""
+    app = QApplication.instance()
+    _system_accent()
+    hints = app.styleHints()
+    if hasattr(hints, "setColorScheme"):  # Qt >= 6.8: anche le parti native (es. barra del titolo)
+        hints.setColorScheme((Qt.ColorScheme.Unknown, Qt.ColorScheme.Light, Qt.ColorScheme.Dark)[theme])
+    # una palette vuota torna a quella del sistema; si forzano solo i ruoli necessari
+    pal = _scheme_palette(theme == 2) if theme in (1, 2) else QPalette()
+    if accent:
+        acc = QColor(accent)
+        pal.setColor(QPalette.ColorRole.Highlight, acc)
+        light = 0.2126 * acc.redF() + 0.7152 * acc.greenF() + 0.0722 * acc.blueF() > 0.6
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("black" if light else "white"))
+    elif theme in (1, 2):  # tema forzato: si tiene comunque l'accento del sistema
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(_system_accent()))
+    app.setPalette(pal)
+
+
 def theme_colors() -> dict:
     """Palette dell'interfaccia derivata dal tema di sistema (chiaro/scuro e colore d'accento)."""
     pal = QApplication.palette()
@@ -620,6 +686,7 @@ def theme_colors() -> dict:
         bubble=_mix(base, acc, 0.24 if dark else 0.12),
         think=_mix(base, text, 0.05 if dark else 0.03),
         codebg=_mix(base, text, 0.08 if dark else 0.045),
+        codehead=_mix(base, text, 0.13 if dark else 0.085),
         codefg=text.name(),
         link=_mix(acc, white, 0.3) if dark else acc.name(),
         err=err.name(),
@@ -713,23 +780,23 @@ QPushButton#chip {{
 }}
 QPushButton#chip:hover {{ border-color:{c['err']}; }}
 QLabel#hint {{ color:{c['muted']}; }}
-QLabel#heroTitle {{ font-size:26px; font-weight:700; color:{c['text']}; }}
+QLabel#heroTitle {{ font-size:30px; font-weight:700; color:{c['text']}; }}
 QLabel#heroSub {{ color:{c['muted']}; }}
-QPushButton#suggestion {{
-    background:{c['bg']}; color:{c['text']}; border:1px solid {c['border']};
-    border-radius:14px; padding:12px 14px; text-align:left;
-}}
-QPushButton#suggestion:hover {{ background:{c['hover']}; border-color:{c['muted']}; }}
+QFrame#suggestion {{ background:{c['surface']}; border:1px solid {c['border']}; border-radius:16px; }}
+QFrame#suggestion:hover {{ background:{c['hover']}; border-color:{c['accent']}; }}
+QLabel#sugTitle {{ color:{c['text']}; font-weight:600; background:transparent; }}
+QLabel#sugSub {{ color:{c['muted']}; background:transparent; }}
 {scrollbars}
 """
 
 
 def doc_css(c: dict) -> str:
     """Foglio di stile dei documenti rich text (messaggi)."""
+    mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
     return (
-        "p, li { line-height:140%; }"
-        f"pre {{ font-family:monospace; color:{c['codefg']}; margin:0; }}"
-        f"code {{ font-family:monospace; background-color:{c['codebg']}; }}"
+        "p, li { line-height:150%; }"
+        f"pre {{ font-family:'{mono}'; color:{c['codefg']}; margin:0; line-height:135%; }}"
+        f"code {{ font-family:'{mono}'; background-color:{c['codebg']}; }}"
         f"a {{ color:{c['link']}; text-decoration:none; }}"
         f"th {{ background-color:{c['codebg']}; }}"
         f"blockquote {{ color:{c['muted']}; }}"
@@ -963,6 +1030,29 @@ class ChatItemDelegate(QStyledItemDelegate):
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    fm2.elidedText(idx.data(ROLE_SUB) or "", Qt.TextElideMode.ElideRight, tr.width()))
         p.restore()
+
+
+class SuggestionCard(QFrame):
+    """Scheda cliccabile della schermata iniziale: titolo in evidenza e descrizione attenuata."""
+
+    def __init__(self, title: str, sub: str, slot):
+        super().__init__(objectName="suggestion")
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._slot = slot
+        v = QVBoxLayout(self)
+        v.setContentsMargins(16, 12, 16, 12)
+        v.setSpacing(2)
+        v.addWidget(QLabel(title, objectName="sugTitle"))
+        s = QLabel(sub, objectName="sugSub")
+        s.setWordWrap(True)
+        s.setFont(scaled_font(s.font(), 0.92))
+        v.addWidget(s)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and self.rect().contains(e.position().toPoint()):
+            self._slot()
 
 
 class RichView(QTextBrowser):
@@ -1590,6 +1680,38 @@ class SettingsDialog(QDialog):
         f.addRow("", self.tray)
         tabs.addTab(g, "Generale")
 
+        # --- aspetto (anteprima immediata; Annulla ripristina)
+        self._orig_look = (int(s["theme"]), s["accent"])
+        self._accent = s["accent"]
+        a = QWidget()
+        af = QFormLayout(a)
+        af.setVerticalSpacing(14)
+        self.theme = QComboBox()
+        self.theme.addItems(["Segui il sistema", "Chiaro", "Scuro"])
+        self.theme.setCurrentIndex(int(s["theme"]))
+        self.theme.currentIndexChanged.connect(self._preview)
+        af.addRow("Tema:", self.theme)
+        sw = QHBoxLayout()
+        sw.setSpacing(8)
+        self.accent_group = QButtonGroup(self)
+        b_sys = QPushButton("Sistema")
+        b_sys.setCheckable(True)
+        b_sys.setToolTip("Usa il colore d'accento del sistema")
+        self.accent_group.addButton(b_sys)
+        sw.addWidget(b_sys)
+        self._swatches = {"": b_sys}
+        for name, col in ACCENTS:
+            b = self._swatch(col, name)
+            self._swatches[col] = b
+            sw.addWidget(b)
+        self.btn_custom = self._swatch(s["accent"] if s["accent"] and s["accent"] not in self._swatches else "", "Personalizzato…")
+        sw.addWidget(self.btn_custom)
+        sw.addStretch(1)
+        (self._swatches.get(s["accent"]) or self.btn_custom).setChecked(True)
+        self.accent_group.buttonClicked.connect(self._on_swatch)
+        af.addRow("Colore d'accento:", sw)
+        tabs.addTab(a, "Aspetto")
+
         # --- prompt
         p = QWidget()
         pl = QVBoxLayout(p)
@@ -1633,6 +1755,49 @@ ad esempio <code>http://192.168.1.50:11434</code>.</p>
         lay.addWidget(bb)
         self.btn_test.clicked.connect(self.test)
 
+    def _swatch(self, color: str, tip: str) -> QToolButton:
+        b = QToolButton()
+        b.setCheckable(True)
+        b.setFixedSize(28, 28)
+        b.setToolTip(tip)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setProperty("color", color)
+        self._paint_swatch(b, color)
+        self.accent_group.addButton(b)
+        return b
+
+    def _paint_swatch(self, b: QToolButton, color: str):
+        pal = QApplication.palette()  # quella del dialogo si aggiorna in ritardo
+        ring = pal.windowText().color().name()
+        fill = color or "transparent"
+        b.setText("" if color else "+")
+        b.setStyleSheet(
+            f"QToolButton {{ background:{fill}; border:2px solid {pal.mid().color().name() if not color else fill};"
+            f" border-radius:14px; }} QToolButton:checked {{ border:2px solid {ring}; }}")
+
+    def _on_swatch(self, b):
+        if b is self.btn_custom:
+            col = QColorDialog.getColor(QColor(self._accent or _system_accent()), self, "Colore d'accento")
+            if not col.isValid():
+                (self._swatches.get(self._accent) or self.btn_custom).setChecked(True)
+                return
+            self._accent = col.name()
+            self.btn_custom.setProperty("color", self._accent)
+            self._paint_swatch(self.btn_custom, self._accent)
+        else:
+            self._accent = b.property("color") or ""
+        self._preview()
+
+    def _preview(self):
+        apply_appearance(self.theme.currentIndex(), self._accent)
+        for b in self.accent_group.buttons():  # l'anello di selezione segue il tema
+            if b is not self._swatches[""]:
+                self._paint_swatch(b, b.property("color") or "")
+
+    def reject(self):
+        apply_appearance(*self._orig_look)
+        super().reject()
+
     def test(self):
         api = Ollama(self.host.text())
         self.test_lbl.setText("Verifica in corso…")
@@ -1647,6 +1812,8 @@ ad esempio <code>http://192.168.1.50:11434</code>.</p>
         s["show_thinking"] = self.show_think.isChecked()
         s["close_to_tray"] = self.tray.isChecked()
         s["system_prompt"] = self.sysprompt.toPlainText()
+        s["theme"] = self.theme.currentIndex()
+        s["accent"] = self._accent
         s.save()
         super().accept()
 
@@ -1694,6 +1861,7 @@ class MainWindow(QMainWindow):
         self._really_quit = False
         self.tray: QSystemTrayIcon | None = None
 
+        apply_appearance(int(self.settings["theme"]), self.settings["accent"])
         self.c = theme_colors()
         self.doc_css = doc_css(self.c)
         self._build_ui()
@@ -1886,11 +2054,7 @@ class MainWindow(QMainWindow):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(10)
         for i, (title, sub, prompt) in enumerate(SUGGESTIONS):
-            b = QPushButton(f"{title}\n{sub}", objectName="suggestion")
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            b.clicked.connect(lambda _=False, p=prompt: self.use_prompt(p))
-            grid.addWidget(b, i // 2, i % 2)
+            grid.addWidget(SuggestionCard(title, sub, lambda p=prompt: self.use_prompt(p)), i // 2, i % 2)
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(grid_w, 100)
@@ -2014,10 +2178,15 @@ class MainWindow(QMainWindow):
     # ---- tema
     def _apply_theme(self):
         self.setStyleSheet(build_qss(self.c))
+        shadow = QGraphicsDropShadowEffect(self.composer)
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 110 if self.c["dark"] else 28))
+        self.composer.setGraphicsEffect(shadow)
         self._update_send()
 
     def changeEvent(self, e):
-        if e.type() == QEvent.Type.ApplicationPaletteChange and hasattr(self, "stack"):
+        if e.type() in (QEvent.Type.ApplicationPaletteChange, QEvent.Type.PaletteChange) and hasattr(self, "stack"):
             QTimer.singleShot(0, self._on_palette_changed)
         super().changeEvent(e)
 
@@ -2614,8 +2783,8 @@ class MainWindow(QMainWindow):
             self._codes[key] = code
             label = html.escape(lang.group(1)) if lang else "codice"
             return (
-                f'<table width="100%" cellspacing="0" cellpadding="8" border="0" bgcolor="{c["codebg"]}">'
-                f'<tr><td><span style="color:{c["muted"]}; font-size:small">{label}</span></td>'
+                f'<table width="100%" cellspacing="0" cellpadding="10" border="0" bgcolor="{c["codebg"]}">'
+                f'<tr bgcolor="{c["codehead"]}"><td><span style="color:{c["muted"]}; font-size:small">{label}</span></td>'
                 f'<td align="right"><a href="copycode:{key}"><span style="color:{c["muted"]}; font-size:small">'
                 f'⧉ Copia</span></a></td></tr>'
                 f'<tr><td colspan="2"><pre>{inner}</pre></td></tr></table>'
