@@ -31,6 +31,8 @@ Offre le stesse funzioni dell'app ufficiale per Windows e si integra bene con KD
 - **Avvio del server Ollama** dall'interfaccia se non è in esecuzione
   (tramite `systemctl` con `pkexec`, oppure `ollama serve`)
 - **Icona nella barra di sistema**, con opzione di riduzione a icona alla chiusura
+- **Aspetto e lingua**: tema chiaro/scuro o di sistema, colore d'accento, interfaccia in italiano o inglese
+  (automatica in base alla lingua del sistema)
 
 ### Requisiti
 
@@ -208,6 +210,8 @@ It provides the same features as the official Windows app and integrates well wi
 - **Start the Ollama server** from the GUI if it isn't running
   (via `systemctl` with `pkexec`, or `ollama serve`)
 - **System tray icon**, with an option to minimize to the tray on close
+- **Appearance and language**: light/dark or system theme, accent colour, Italian or English interface
+  (automatic, based on the system language)
 
 ### Requirements
 
